@@ -623,6 +623,13 @@ class DashboardStats(BaseModel):
     total_courses: int
     total_users: int
 
+class PaginatedPapersResponse(BaseModel):
+    items: List[PaperResponse]
+    total: int
+    page: int
+    size: int
+    pages: int
+
 # ========== Auth Functions ==========
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -1781,6 +1788,67 @@ def get_pending_papers(db: Session = Depends(get_db), admin: User = Depends(requ
         joinedload(Paper.uploader)
     ).filter(Paper.status == SubmissionStatus.PENDING).order_by(Paper.uploaded_at.desc()).all()
     return [format_paper_response(paper, True) for paper in papers]
+
+@app.get("/papers/public", response_model=PaginatedPapersResponse)
+def get_public_papers_paginated(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    course_id: Optional[int] = None,
+    paper_type: Optional[PaperType] = None,
+    year: Optional[int] = None,
+    semester: Optional[str] = None,
+    department: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get all approved papers (public access) - Paginated"""
+    # Create cache key based on filters and pagination
+    cache_key = f"public_papers_paginated_{page}_{limit}_{course_id}_{paper_type}_{year}_{semester}_{department}"
+    cached = get_cached(cache_key)
+    if cached is not None:
+        return cached
+    
+    query = db.query(Paper).filter(Paper.status == SubmissionStatus.APPROVED)
+    
+    # Apply filters
+    if course_id:
+        query = query.filter(Paper.course_id == course_id)
+    if paper_type:
+        query = query.filter(Paper.paper_type == paper_type)
+    if year:
+        query = query.filter(Paper.year == year)
+    if semester:
+        query = query.filter(Paper.semester == semester)
+    if department:
+        query = query.filter(Paper.department == department)
+        
+    # Get total count before pagination
+    total = query.count()
+    
+    # Calculate offset
+    offset = (page - 1) * limit
+    
+    # Calculate total pages
+    import math
+    pages = math.ceil(total / limit) if limit > 0 else 0
+    
+    # Apply pagination and optimize with eager loading
+    papers = query.options(
+        joinedload(Paper.course),
+        joinedload(Paper.uploader)
+    ).order_by(Paper.uploaded_at.desc()).offset(offset).limit(limit).all()
+    
+    items = [format_paper_response(paper, False) for paper in papers]
+    
+    result = {
+        "items": items,
+        "total": total,
+        "page": page,
+        "size": limit,
+        "pages": pages
+    }
+    
+    set_cached(cache_key, result, _cache_ttl['public_papers'])
+    return result
 
 @app.get("/papers/public/all", response_model=List[PaperResponse])
 def get_public_papers(
