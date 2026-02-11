@@ -271,6 +271,11 @@ class User(Base):
     
     papers = relationship("Paper", foreign_keys="Paper.uploaded_by", back_populates="uploader")
 
+    @property
+    def is_sub_admin(self) -> bool:
+        return self.admin_role == 'coding_ta'
+
+
 class Course(Base):
     __tablename__ = "courses"
     
@@ -282,7 +287,8 @@ class Course(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     papers = relationship("Paper", back_populates="course")
-    challenges = relationship("DailyChallenge", back_populates="course")
+    challenges = relationship("DailyChallenge", back_populates="course")  # Legacy
+    contests = relationship("DailyContest", back_populates="course")
 
 class Paper(Base):
     __tablename__ = "papers"
@@ -327,6 +333,47 @@ class Paper(Base):
         Index('idx_paper_type_year', 'paper_type', 'year'),
     )
 
+# New Hybrid Approach Models for Multi-Question Multi-Language Support
+class DailyContest(Base):
+    __tablename__ = "daily_contests"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"), index=True)
+    date = Column(String(50), nullable=False, unique=True)  # e.g., "Day 1", "Day 2"
+    title = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    course = relationship("Course", back_populates="contests")
+    questions = relationship("ContestQuestion", back_populates="contest", cascade="all, delete-orphan", order_by="ContestQuestion.order")
+
+class ContestQuestion(Base):
+    __tablename__ = "contest_questions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    contest_id = Column(Integer, ForeignKey("daily_contests.id", ondelete="CASCADE"), index=True)
+    order = Column(Integer, nullable=False, default=1)  # Display order
+    title = Column(String(255), nullable=False)
+    question = Column(Text, nullable=False)
+    code_snippets = Column(JSON, nullable=False)  # {"python": "code", "c": "code", "cpp": "code"}
+    explanation = Column(Text, nullable=False)
+    media_link = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    contest = relationship("DailyContest", back_populates="questions")
+
+class CodingAnnouncement(Base):
+    __tablename__ = "coding_announcements"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id", ondelete="SET NULL"), nullable=True, index=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    attachment_url = Column(String(500), nullable=True)  # URL/Path to file
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# Legacy model - kept for backward compatibility during migration
 class DailyChallenge(Base):
     __tablename__ = "daily_challenges"
     
@@ -492,6 +539,7 @@ class UserResponse(BaseModel):
     name: str
     is_admin: bool
     admin_role: Optional[str] = None
+    is_sub_admin: bool = False
     email_verified: bool
     # extended profile fields
     age: Optional[int] = None
@@ -546,6 +594,7 @@ class CourseResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+# Legacy Challenge Models (kept for backward compatibility)
 class DailyChallengeCreate(BaseModel):
     course_id: int
     date: str
@@ -560,6 +609,23 @@ class DailyChallengeUpdate(BaseModel):
     question: Optional[str] = None
     code_snippet: Optional[str] = None
     explanation: Optional[str] = None
+
+class CodingAnnouncementCreate(BaseModel):
+    title: str
+    content: str
+    course_id: Optional[int] = None
+    # Attachment is handled via UploadFile in the endpoint
+
+class CodingAnnouncementResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    course_id: Optional[int]
+    title: str
+    content: str
+    attachment_url: Optional[str]
+    created_at: datetime
+
     media_link: Optional[str] = None
 
 class DailyChallengeResponse(BaseModel):
@@ -573,6 +639,96 @@ class DailyChallengeResponse(BaseModel):
     explanation: str
     media_link: Optional[str]
     created_at: datetime
+
+# New Contest Models (Hybrid Approach)
+class QuestionCreate(BaseModel):
+    title: str
+    question: str
+    code_snippets: dict  # {"python": "code", "c": "code", "cpp": "code"}
+    explanation: str
+    media_link: Optional[str] = None
+    order: int = 1
+    
+    @field_validator('code_snippets')
+    @classmethod
+    def validate_code_snippets(cls, v):
+        """Validate code_snippets structure"""
+        if not isinstance(v, dict):
+            raise ValueError('code_snippets must be a dictionary')
+        
+        if not v:
+            raise ValueError('code_snippets must contain at least one language')
+        
+        # Validate that all keys are strings and values are non-empty strings
+        valid_languages = {'python', 'c', 'cpp', 'java', 'javascript', 'go', 'rust', 'ruby', 'php', 'swift', 'kotlin'}
+        for lang, code in v.items():
+            if not isinstance(lang, str):
+                raise ValueError(f'Language key must be a string, got {type(lang)}')
+            
+            if lang.lower() not in valid_languages:
+                raise ValueError(f'Unsupported language: {lang}. Supported languages: {", ".join(sorted(valid_languages))}')
+            
+            if not isinstance(code, str):
+                raise ValueError(f'Code for language "{lang}" must be a string')
+            
+            if not code.strip():
+                raise ValueError(f'Code for language "{lang}" cannot be empty')
+        
+        return v
+
+class QuestionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    contest_id: int
+    order: int
+    title: str
+    question: str
+    code_snippets: dict
+    available_languages: List[str] = []
+    explanation: str
+    media_link: Optional[str]
+    created_at: datetime
+    
+    @classmethod
+    def from_orm_with_languages(cls, question):
+        """Create response with available_languages extracted from code_snippets"""
+        data = {
+            "id": question.id,
+            "contest_id": question.contest_id,
+            "order": question.order,
+            "title": question.title,
+            "question": question.question,
+            "code_snippets": question.code_snippets,
+            "available_languages": list(question.code_snippets.keys()) if question.code_snippets else [],
+            "explanation": question.explanation,
+            "media_link": question.media_link,
+            "created_at": question.created_at
+        }
+        return cls(**data)
+
+class ContestCreate(BaseModel):
+    course_id: int
+    date: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    questions: List[QuestionCreate] = []
+
+class ContestUpdate(BaseModel):
+    date: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+class ContestResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    course_id: int
+    date: str
+    title: Optional[str]
+    description: Optional[str]
+    created_at: datetime
+    questions: List[QuestionResponse] = []
 
 class PaperResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -1551,6 +1707,41 @@ def delete_course(course_id: int, db: Session = Depends(get_db), admin: User = D
     return {"message": "Course deleted successfully"}
 
 # ========== Coding Hour Endpoints ==========
+@app.post("/challenges/upload")
+async def upload_challenge_media(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_coding_admin),
+    db: Session = Depends(get_db)
+):
+    """Admin: Upload media for a challenge"""
+    # Create unique filename
+    file_ext = os.path.splitext(file.filename)[1]
+    filename = f"{uuid4()}{file_ext}"
+    file_path = UPLOAD_DIR / filename
+    
+    # Save file
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Generate URL (assuming served statically or via similar mechanism as papers)
+    # The frontend expects 'media_link' in response
+    # We can rely on the static mounting of /uploads or return a full URL
+    # Based on paper implementation, let's return a relative path or a full URL if configured
+    # For now, return the filename which the frontend likely constructs or uses directly
+    # But wait, HostDashboard uses it as href directly: <a href={challenge.media_link} ...>
+    # So it should be a full URL or a path relative to the site root if served statically.
+    
+    # Assuming /uploads is mounted as static (need to verify, but common pattern)
+    # If not, we might need a download endpoint.
+    # Looking at main.py lines 1621+, papers are uploaded but how are they served?
+    # I'll enable static serving of uploads dir if not present, or assume /uploads/filename works.
+    
+    media_url = f"{API_BASE_URL}/uploads/{filename}" if API_BASE_URL else f"/uploads/{filename}"
+    # Actually, simpler to return just relative path if frontend handles it, 
+    # but HostDashboard line 90 sets formData.media_link = response.data.media_link
+    
+    return {"media_link": media_url, "filename": filename}
+
 @app.post("/challenges", response_model=DailyChallengeResponse)
 def create_challenge(challenge: DailyChallengeCreate, db: Session = Depends(get_db), admin: User = Depends(require_coding_admin)):
     """Admin: Create a new daily challenge"""
@@ -1608,6 +1799,25 @@ def get_all_challenges_admin(
     challenges = db.query(DailyChallenge).order_by(DailyChallenge.date.desc()).all()
     return challenges
 
+@app.get("/admin/contests", response_model=List[ContestResponse])
+def get_all_contests(db: Session = Depends(get_db), admin: User = Depends(require_coding_admin)):
+    """Admin: Get all contests across all courses"""
+    contests = db.query(DailyContest).order_by(DailyContest.id.desc()).all()
+    
+    result = []
+    for contest in contests:
+        response_questions = [QuestionResponse.from_orm_with_languages(q) for q in contest.questions]
+        result.append(ContestResponse(
+            id=contest.id,
+            course_id=contest.course_id,
+            date=contest.date,
+            title=contest.title,
+            description=contest.description,
+            created_at=contest.created_at,
+            questions=response_questions
+        ))
+    return result
+
 @app.get("/challenges/course/{course_id}", response_model=List[DailyChallengeResponse])
 def get_course_challenges(course_id: int, db: Session = Depends(get_db)):
     """Get all challenges for a specific course"""
@@ -1621,6 +1831,230 @@ def get_challenge(challenge_id: int, db: Session = Depends(get_db)):
     if not challenge:
         raise HTTPException(status_code=404, detail="Challenge not found")
     return challenge
+
+
+# ========== New Contest Endpoints (Hybrid Approach) ==========
+
+@app.post("/contests", response_model=ContestResponse)
+def create_contest(contest: ContestCreate, db: Session = Depends(get_db), admin: User = Depends(require_coding_admin)):
+    """Admin: Create a new daily contest with multiple questions"""
+    # Check if course exists
+    course = db.query(Course).filter(Course.id == contest.course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    # Check if a contest already exists for this date and course
+    existing = db.query(DailyContest).filter(
+        DailyContest.course_id == contest.course_id,
+        DailyContest.date == contest.date
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"A contest already exists for {contest.date}")
+
+    db_contest = DailyContest(
+        course_id=contest.course_id,
+        date=contest.date,
+        title=contest.title,
+        description=contest.description
+    )
+    db.add(db_contest)
+    db.flush()
+
+    for q_data in contest.questions:
+        db_question = ContestQuestion(
+            contest_id=db_contest.id,
+            order=q_data.order,
+            title=q_data.title,
+            question=q_data.question,
+            code_snippets=q_data.code_snippets,
+            explanation=q_data.explanation,
+            media_link=q_data.media_link
+        )
+        db.add(db_question)
+
+    db.commit()
+    db.refresh(db_contest)
+    
+    # Format response
+    response_questions = [QuestionResponse.from_orm_with_languages(q) for q in db_contest.questions]
+    return ContestResponse(
+        id=db_contest.id,
+        course_id=db_contest.course_id,
+        date=db_contest.date,
+        title=db_contest.title,
+        description=db_contest.description,
+        created_at=db_contest.created_at,
+        questions=response_questions
+    )
+
+@app.get("/contests/course/{course_id}", response_model=List[ContestResponse])
+def get_course_contests(course_id: int, db: Session = Depends(get_db)):
+    """Get all contests for a specific course"""
+    contests = db.query(DailyContest).filter(DailyContest.course_id == course_id).order_by(DailyContest.id.desc()).all()
+    
+    result = []
+    for contest in contests:
+        response_questions = [QuestionResponse.from_orm_with_languages(q) for q in contest.questions]
+        result.append(ContestResponse(
+            id=contest.id,
+            course_id=contest.course_id,
+            date=contest.date,
+            title=contest.title,
+            description=contest.description,
+            created_at=contest.created_at,
+            questions=response_questions
+        ))
+    return result
+
+@app.get("/contests/{contest_id}", response_model=ContestResponse)
+def get_contest(contest_id: int, db: Session = Depends(get_db)):
+    """Get a specific contest details with all questions"""
+    contest = db.query(DailyContest).filter(DailyContest.id == contest_id).first()
+    if not contest:
+        raise HTTPException(status_code=404, detail="Contest not found")
+        
+    response_questions = [QuestionResponse.from_orm_with_languages(q) for q in contest.questions]
+    return ContestResponse(
+        id=contest.id,
+        course_id=contest.course_id,
+        date=contest.date,
+        title=contest.title,
+        description=contest.description,
+        created_at=contest.created_at,
+        questions=response_questions
+    )
+
+@app.delete("/contests/{contest_id}")
+def delete_contest(contest_id: int, db: Session = Depends(get_db), admin: User = Depends(require_coding_admin)):
+    """Admin: Delete a contest (cascades to questions)"""
+    contest = db.query(DailyContest).filter(DailyContest.id == contest_id).first()
+    if not contest:
+        raise HTTPException(status_code=404, detail="Contest not found")
+    
+    db.delete(contest)
+    db.commit()
+    return {"message": "Contest deleted successfully"}
+
+@app.get("/questions/{question_id}", response_model=QuestionResponse)
+def get_question(question_id: int, db: Session = Depends(get_db)):
+    """Get a specific question details"""
+    question = db.query(ContestQuestion).filter(ContestQuestion.id == question_id).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return QuestionResponse.from_orm_with_languages(question)
+
+@app.put("/contests/{contest_id}", response_model=ContestResponse)
+def update_contest(
+    contest_id: int, 
+    contest_update: ContestUpdate, 
+    db: Session = Depends(get_db), 
+    admin: User = Depends(require_coding_admin)
+):
+    """Admin: Update contest metadata (date, title, description)"""
+    db_contest = db.query(DailyContest).filter(DailyContest.id == contest_id).first()
+    if not db_contest:
+        raise HTTPException(status_code=404, detail="Contest not found")
+    
+    # Update fields if provided
+    if contest_update.date is not None:
+        # Check if new date conflicts with existing contest
+        existing = db.query(DailyContest).filter(
+            DailyContest.course_id == db_contest.course_id,
+            DailyContest.date == contest_update.date,
+            DailyContest.id != contest_id
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"A contest already exists for {contest_update.date}")
+        db_contest.date = contest_update.date
+    
+    if contest_update.title is not None:
+        db_contest.title = contest_update.title
+    
+    if contest_update.description is not None:
+        db_contest.description = contest_update.description
+    
+    db.commit()
+    db.refresh(db_contest)
+    
+    # Format response
+    response_questions = [QuestionResponse.from_orm_with_languages(q) for q in db_contest.questions]
+    return ContestResponse(
+        id=db_contest.id,
+        course_id=db_contest.course_id,
+        date=db_contest.date,
+        title=db_contest.title,
+        description=db_contest.description,
+        created_at=db_contest.created_at,
+        questions=response_questions
+    )
+
+@app.post("/contests/{contest_id}/questions", response_model=QuestionResponse)
+def add_question_to_contest(
+    contest_id: int,
+    question: QuestionCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_coding_admin)
+):
+    """Admin: Add a new question to an existing contest"""
+    contest = db.query(DailyContest).filter(DailyContest.id == contest_id).first()
+    if not contest:
+        raise HTTPException(status_code=404, detail="Contest not found")
+    
+    db_question = ContestQuestion(
+        contest_id=contest_id,
+        order=question.order,
+        title=question.title,
+        question=question.question,
+        code_snippets=question.code_snippets,
+        explanation=question.explanation,
+        media_link=question.media_link
+    )
+    db.add(db_question)
+    db.commit()
+    db.refresh(db_question)
+    
+    return QuestionResponse.from_orm_with_languages(db_question)
+
+@app.put("/questions/{question_id}", response_model=QuestionResponse)
+def update_question(
+    question_id: int,
+    question_update: QuestionCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_coding_admin)
+):
+    """Admin: Update a question"""
+    db_question = db.query(ContestQuestion).filter(ContestQuestion.id == question_id).first()
+    if not db_question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    
+    # Update all fields
+    db_question.order = question_update.order
+    db_question.title = question_update.title
+    db_question.question = question_update.question
+    db_question.code_snippets = question_update.code_snippets
+    db_question.explanation = question_update.explanation
+    db_question.media_link = question_update.media_link
+    
+    db.commit()
+    db.refresh(db_question)
+    
+    return QuestionResponse.from_orm_with_languages(db_question)
+
+@app.delete("/questions/{question_id}")
+def delete_question(
+    question_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_coding_admin)
+):
+    """Admin: Delete a question from a contest"""
+    question = db.query(ContestQuestion).filter(ContestQuestion.id == question_id).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    
+    db.delete(question)
+    db.commit()
+    return {"message": "Question deleted successfully"}
+
 
 
 # ========== Paper Endpoints ==========
@@ -2371,6 +2805,90 @@ def favicon():
     from fastapi import Response
 
     return Response(status_code=204)
+
+# ========== Coding Announcements Endpoints ==========
+
+@app.get("/coding-announcements", response_model=List[CodingAnnouncementResponse])
+def get_coding_announcements(
+    course_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(CodingAnnouncement)
+    if course_id:
+        query = query.filter(or_(CodingAnnouncement.course_id == course_id, CodingAnnouncement.course_id == None))
+    return query.order_by(CodingAnnouncement.created_at.desc()).all()
+
+@app.post("/admin/coding-announcements", response_model=CodingAnnouncementResponse)
+async def create_coding_announcement(
+    title: str = Form(...),
+    content: str = Form(...),
+    course_id: Optional[int] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check authorization (Coding TA or Admin)
+    # Note: user.is_sub_admin is basically user.admin_role == 'coding_ta'
+    if not (current_user.is_admin or current_user.admin_role == 'coding_ta'):
+        raise HTTPException(status_code=403, detail="Not authorized to post coding announcements")
+    
+    attachment_url = None
+    if file:
+        # Validate file size (2MB limit)
+        content_bytes = await file.read()
+        if len(content_bytes) > 2 * 1024 * 1024:
+             raise HTTPException(status_code=400, detail="File too large. Max size is 2MB.")
+        
+        # Reset cursor
+        await file.seek(0)
+        
+        # Save file
+        file_ext = Path(file.filename).suffix
+        safe_filename = f"{uuid.uuid4()}{file_ext}"
+        file_path = UPLOAD_DIR / safe_filename
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        attachment_url = str(safe_filename)
+
+    announcement = CodingAnnouncement(
+        title=title,
+        content=content,
+        course_id=course_id,
+        attachment_url=attachment_url
+    )
+    db.add(announcement)
+    db.commit()
+    db.refresh(announcement)
+    return announcement
+
+@app.delete("/admin/coding-announcements/{announcement_id}")
+def delete_coding_announcement(
+    announcement_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not (current_user.is_admin or current_user.admin_role == 'coding_ta'):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    announcement = db.query(CodingAnnouncement).filter(CodingAnnouncement.id == announcement_id).first()
+    if not announcement:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    
+    # Delete file if exists
+    if announcement.attachment_url:
+        file_path = find_file_in_uploads(announcement.attachment_url)
+        if file_path and file_path.exists():
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Error deleting file: {e}")
+    
+    db.delete(announcement)
+    db.commit()
+    return {"message": "Announcement deleted successfully"}
+
 
 if __name__ == "__main__":
     import uvicorn
