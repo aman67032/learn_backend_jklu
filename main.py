@@ -5,8 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.gzip import GZipMiddleware
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, Text, Enum as SQLEnum, DateTime, text, Index, or_, and_, LargeBinary, JSON, inspect
-from sqlalchemy.orm import declarative_base, Session, sessionmaker, relationship, joinedload
+from fake_sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, Text, Enum as SQLEnum, DateTime, text, Index, or_, and_, LargeBinary, JSON, inspect
+from fake_sqlalchemy import declarative_base, Session, sessionmaker, relationship, joinedload
 from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
@@ -69,62 +69,10 @@ elif SMTP_CONFIGURED:
     print("   Note: Some cloud platforms may block SMTP connections")
 print("\n")
 
-# Database setup with Neon DB and Railway PostgreSQL support
-# Neon requires SSL/TLS connections, Railway PostgreSQL does not
-if "neon.tech" in DATABASE_URL or "neondb" in DATABASE_URL:
-    # Neon DB connection with SSL
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args={
-            "sslmode": "require",
-            "connect_timeout": 10,
-        },
-        pool_pre_ping=True,
-        pool_recycle=300,
-        pool_size=5,
-        max_overflow=10,
-    )
-    db_type = "Neon DB (SSL/TLS enabled)"
-elif "railway.app" in DATABASE_URL or "rlwy.net" in DATABASE_URL:
-    # Railway PostgreSQL connection (no SSL required)
-    engine = create_engine(
-        DATABASE_URL,
-        pool_pre_ping=True,
-        pool_recycle=300,
-        connect_args={
-            "connect_timeout": 10,
-        },
-        pool_size=5,
-        max_overflow=10,
-    )
-    db_type = "Railway PostgreSQL"
-else:
-    # Local PostgreSQL or other providers
-    engine = create_engine(
-        DATABASE_URL,
-        pool_pre_ping=True,
-        pool_recycle=300,
-        connect_args={
-            "connect_timeout": 10,
-        }
-    )
-    db_type = "PostgreSQL"
+# Database setup with MongoDB
+db_type = "MongoDB (Atlas)"
 
-# Validate DB connectivity; fall back to SQLite for local development if PostgreSQL is unavailable
-try:
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
-except Exception as e:
-    if DATABASE_URL.startswith("postgresql://") and ("localhost" in DATABASE_URL or "127.0.0.1" in DATABASE_URL):
-        print("WARNING: PostgreSQL at localhost:5432 is not reachable. Falling back to local SQLite database 'paper_portal.db' for development.")
-        DATABASE_URL = "sqlite:///paper_portal.db"
-        engine = create_engine(
-            DATABASE_URL,
-            connect_args={"check_same_thread": False},
-            pool_pre_ping=True,
-        )
-    else:
-        raise
+engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

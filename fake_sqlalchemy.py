@@ -1,0 +1,297 @@
+import os
+from pymongo import MongoClient
+import urllib.parse
+
+# Dummy Base
+class Base:
+    metadata = type("Metadata", (), {"create_all": lambda *a, **k: None})()
+    
+def declarative_base():
+    return Base
+
+class Column:
+    def __init__(self, *args, **kwargs):
+        self.primary_key = kwargs.get("primary_key", False)
+        self.default = kwargs.get("default", None)
+        self.name = None # assigned by metaclass in real SA, we'll hack it out
+        self.type_ = args[0] if args else None
+        
+    def __eq__(self, other):
+        return Condition(self, "==", other)
+    def __ne__(self, other):
+        return Condition(self, "!=", other)
+    def __lt__(self, other):
+        return Condition(self, "<", other)
+    def __le__(self, other):
+        return Condition(self, "<=", other)
+    def __gt__(self, other):
+        return Condition(self, ">", other)
+    def __ge__(self, other):
+        return Condition(self, ">=", other)
+    def in_(self, other):
+        return Condition(self, "in", other)
+    def ilike(self, other):
+        return Condition(self, "ilike", other)
+    def like(self, other):
+        return Condition(self, "ilike", other) # map like to ilike for simplicity in mongo Regex
+    def desc(self):
+        return (self, -1)
+    def asc(self):
+        return (self, 1)
+
+class Condition:
+    def __init__(self, field, op, val):
+        self.field = field
+        self.op = op
+        self.val = val
+
+def or_(*conditions):
+    return {"$or": [c for c in conditions]}
+
+def and_(*conditions):
+    return {"$and": [c for c in conditions]}
+
+class inspect:
+    def __init__(self, engine):
+        pass
+    def get_columns(self, tablename):
+        return []
+
+def text(sql):
+    return sql
+
+def joinedload(*args):
+    return args
+
+def relationship(*args, **kwargs):
+    return property(lambda self: None)
+
+# Datatypes
+def DatatypeFactory(*args, **kwargs): return args
+
+Integer = DatatypeFactory
+String = DatatypeFactory
+Boolean = DatatypeFactory
+Text = DatatypeFactory
+DateTime = DatatypeFactory
+LargeBinary = DatatypeFactory
+JSON = DatatypeFactory
+def Enum(*args, **kwargs): return args
+def ForeignKey(*args, **kwargs): return args
+def Index(*args, **kwargs): return args
+
+class FakeModelInstance:
+    def __init__(self, data_dict, model_class):
+        self._collection_name = model_class.__tablename__
+        self._model_class = model_class
+        for k, v in data_dict.items():
+            if k == "_id":
+                continue # ignore mongo ID mapping
+            setattr(self, k, v)
+        # Apply defaults for any missing attributes attached to the model class
+        for k in dir(model_class):
+            if not k.startswith("_"):
+                attr = getattr(model_class, k)
+                if isinstance(attr, Column):
+                    if not hasattr(self, k):
+                        if attr.default is not None:
+                            val = attr.default() if callable(attr.default) else attr.default
+                            setattr(self, k, val)
+                        else:
+                            setattr(self, k, None)
+                            
+    def dict(self):
+        d = {}
+        for k in dir(self):
+            if not k.startswith("_") and not callable(getattr(self, k)):
+                d[k] = getattr(self, k)
+        d.pop("metadata", None)
+        return d
+
+class Query:
+    def __init__(self, session, model):
+        self.session = session
+        self.model = model
+        self.collection = session.db[model.__tablename__]
+        self.query_filter = {}
+        self._limit = 0
+        self._offset = 0
+        self._sort = None
+
+    def _parse_condition(self, cond):
+        if isinstance(cond, dict): # or_ / and_
+            parsed_cond = {}
+            for k, conditions_list in cond.items():
+                parsed_cond[k] = [self._parse_condition(c) for c in conditions_list]
+            return parsed_cond
+            
+        field_name = None
+        for k in dir(self.model):
+            if getattr(self.model, k) is cond.field:
+                field_name = k
+                break
+        if not field_name:
+            field_name = "unknown"
+
+        if cond.op == "==":
+            return {field_name: cond.val}
+        elif cond.op == "!=":
+            return {field_name: {"$ne": cond.val}}
+        elif cond.op == "in":
+            return {field_name: {"$in": cond.val}}
+        elif cond.op == "ilike":
+            import re
+            pattern = cond.val.replace('%', '.*')
+            return {field_name: {"$regex": pattern, "$options": "i"}}
+        elif cond.op == ">":
+             return {field_name: {"$gt": cond.val}}
+        elif cond.op == ">=":
+             return {field_name: {"$gte": cond.val}}
+        elif cond.op == "<":
+             return {field_name: {"$lt": cond.val}}
+        elif cond.op == "<=":
+             return {field_name: {"$lte": cond.val}}
+        return {}
+
+    def filter(self, *conditions):
+        for cond in conditions:
+            parsed = self._parse_condition(cond)
+            # Merge into query_filter safely using top level $and if necessary to prevent key overwrite
+            if not self.query_filter:
+                self.query_filter = parsed
+            else:
+                if "$and" not in self.query_filter:
+                    self.query_filter = {"$and": [self.query_filter, parsed]}
+                else:
+                    self.query_filter["$and"].append(parsed)
+        return self
+        
+    def order_by(self, *args):
+        sort_fields = []
+        for arg in args:
+            if isinstance(arg, tuple): # func.desc() hack returned tuple earlier
+                col, direction = arg
+                # find col name
+                name = [k for k in dir(self.model) if getattr(self.model, k) is col][0]
+                sort_fields.append((name, direction))
+            else:
+                name = [k for k in dir(self.model) if getattr(self.model, k) is arg][0]
+                sort_fields.append((name, 1))
+        self._sort = sort_fields
+        return self
+
+    def offset(self, num):
+        self._offset = num
+        return self
+        
+    def limit(self, num):
+        self._limit = num
+        return self
+
+    def first(self):
+        cursor = self.collection.find(self.query_filter)
+        if self._sort: cursor = cursor.sort(self._sort)
+        if self._offset: cursor = cursor.skip(self._offset)
+        doc = cursor.limit(1)
+        res = list(doc)
+        if res:
+            return FakeModelInstance(res[0], self.model)
+        return None
+
+    def all(self):
+        cursor = self.collection.find(self.query_filter)
+        if self._sort: cursor = cursor.sort(self._sort)
+        if self._offset: cursor = cursor.skip(self._offset)
+        if self._limit: cursor = cursor.limit(self._limit)
+        return [FakeModelInstance(doc, self.model) for doc in cursor]
+
+    def count(self):
+        return self.collection.count_documents(self.query_filter)
+        
+    def delete(self):
+        self.collection.delete_many(self.query_filter)
+
+    def options(self, *args):
+        return self
+
+class Session:
+    def __init__(self, db):
+        self.db = db
+        self._new_objects = []
+
+    def query(self, model):
+        # We also need to hack class attributes to ensure Column identities hook up correctly 
+        # Since SQLAlchemy models define fields like email = Column(String), 
+        # mapping them is trivial via introspsction.
+        return Query(self, model)
+
+    def add(self, instance):
+        self._new_objects.append(instance)
+
+    def commit(self):
+        for inst in self._new_objects:
+            collection = self.db[inst.__tablename__]
+            doc = inst.dict()
+            if not getattr(inst, 'id', None):
+                # We need to auto-generate integer IDs since SQL did this
+                # Workaround: find max ID in collection + 1
+                max_doc = collection.find().sort("id", -1).limit(1)
+                max_id = 1
+                for d in max_doc:
+                    if d.get("id"): max_id = d["id"] + 1
+                doc["id"] = max_id
+                inst.id = max_id
+            
+            # Upsert
+            collection.update_one({"id": doc["id"]}, {"$set": doc}, upsert=True)
+        self._new_objects = []
+
+    def refresh(self, instance):
+        # Already set by commit logic, but simulating re-fetch
+        collection = self.db[instance.__tablename__]
+        doc = collection.find_one({"id": instance.id})
+        if doc:
+            for k, v in doc.items():
+                if k != "_id":
+                    setattr(instance, k, v)
+
+    def close(self):
+        pass
+
+    def delete(self, instance):
+        collection = self.db[instance.__tablename__]
+        collection.delete_one({"id": getattr(instance, 'id')})
+        self.commit()
+
+class create_engine:
+    def __init__(self, url, *args, **kwargs):
+        self.client = MongoClient(url)
+        # Ensure we connect to paperportal DB
+        # if url string contains ?appName=paperportal, pymongo connects fine
+        self.db = self.client.get_database("paperportal")
+        
+    def connect(self):
+        class DummyConn:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def execute(self, *a): return True
+        return DummyConn()
+        
+    @property
+    def dialect(self):
+        class DummyDialect: name="postgresql"
+        return DummyDialect()
+        
+    def begin(self):
+         class DummyConn:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def execute(self, *a): return True
+         return DummyConn()
+
+def sessionmaker(*args, **kwargs):
+    bind = kwargs.get("bind")
+    def maker():
+        return Session(bind.db)
+    return maker
+

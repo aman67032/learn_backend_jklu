@@ -1,3 +1,4 @@
 .env
 exams/
 new/
+server_log*.txt
