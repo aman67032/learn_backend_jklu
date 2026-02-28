@@ -56,15 +56,15 @@ SMTP_CONFIGURED = bool(SMTP_USER and SMTP_PASS and SMTP_SERVER and not SMTP_USER
 EMAIL_CONFIGURED = bool(EMAIL_SERVICE_URL) or SMTP_CONFIGURED
 
 if not EMAIL_CONFIGURED:
-    print("\n⚠️  WARNING: Email not configured!")
+    print("\n[WARNING]  WARNING: Email not configured!")
     print("   Set SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASS")
     print("   OTP emails will be printed to console only for now")
     print("\n")
 elif EMAIL_SERVICE_URL:
-    print("\n✓ External Email Service configured")
+    print("\n[OK] External Email Service configured")
     print(f"   Service URL: {EMAIL_SERVICE_URL}")
 elif SMTP_CONFIGURED:
-    print(f"\n✓ SMTP email service configured: {SMTP_SERVER}:{SMTP_PORT}")
+    print(f"\n[OK] SMTP email service configured: {SMTP_SERVER}:{SMTP_PORT}")
     print(f"   From: {SMTP_FROM_EMAIL}")
     print("   Note: Some cloud platforms may block SMTP connections")
 print("\n")
@@ -909,7 +909,7 @@ async def log_requests(request: Request, call_next):
     
     # Log 4xx errors with details
     if 400 <= response.status_code < 500:
-        print(f"⚠️ 4xx Error: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.3f}s")
+        print(f"[ERROR] 4xx Error: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.3f}s")
         print(f"   Query params: {dict(request.query_params)}")
         if request.headers.get("authorization"):
             print(f"   Auth: Present")
@@ -918,7 +918,7 @@ async def log_requests(request: Request, call_next):
     
     # Log slow requests (>1s)
     if process_time > 1.0:
-        print(f"🐌 Slow Request: {request.method} {request.url.path} - Time: {process_time:.3f}s")
+        print(f"[SLOW] Slow Request: {request.method} {request.url.path} - Time: {process_time:.3f}s")
     
     return response
 

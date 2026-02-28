@@ -81,7 +81,8 @@ def ForeignKey(*args, **kwargs): return args
 def Index(*args, **kwargs): return args
 
 class FakeModelInstance:
-    def __init__(self, data_dict, model_class):
+    def __init__(self, data_dict, model_class, session=None):
+        self._session = session
         self._collection_name = model_class.__tablename__
         self._model_class = model_class
         for k, v in data_dict.items():
@@ -107,6 +108,35 @@ class FakeModelInstance:
                 d[k] = getattr(self, k)
         d.pop("metadata", None)
         return d
+        
+    def __getattr__(self, name):
+        # Handle relationships like "questions" based on the parent instance
+        if not self._session:
+            return [] if name.endswith("s") else None
+            
+        try:
+            # Check if this property maps to a relationship in the class
+            attr = getattr(self._model_class, name, None)
+            if not isinstance(attr, property):
+                return [] if name.endswith("s") else None
+                
+            # If so, aggressively fetch related docs
+            # Simple heuristic: contests have questions, courses have papers
+            if name == "questions":
+                docs = self._session.db["contest_questions"].find({"contest_id": self.id})
+                from main import ContestQuestion
+                return [FakeModelInstance(doc, ContestQuestion, self._session) for doc in docs]
+            if name == "papers":
+                docs = self._session.db["papers"].find({"course_id": self.id})
+                from main import Paper
+                return [FakeModelInstance(doc, Paper, self._session) for doc in docs]
+            
+        except Exception:
+            pass
+            
+        if name.endswith("s"):
+            return []
+        return None
 
 class Query:
     def __init__(self, session, model):
@@ -195,7 +225,7 @@ class Query:
         doc = cursor.limit(1)
         res = list(doc)
         if res:
-            return FakeModelInstance(res[0], self.model)
+            return FakeModelInstance(res[0], self.model, self.session)
         return None
 
     def all(self):
@@ -203,7 +233,7 @@ class Query:
         if self._sort: cursor = cursor.sort(self._sort)
         if self._offset: cursor = cursor.skip(self._offset)
         if self._limit: cursor = cursor.limit(self._limit)
-        return [FakeModelInstance(doc, self.model) for doc in cursor]
+        return [FakeModelInstance(doc, self.model, self.session) for doc in cursor]
 
     def count(self):
         return self.collection.count_documents(self.query_filter)
