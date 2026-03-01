@@ -2541,10 +2541,24 @@ async def download_paper(
     # Check if file exists in database
     if paper.file_data:
         # Serve from database
+        import gzip as gzip_mod
         from fastapi.responses import Response
+        file_content = paper.file_data
+        # Handle bytes stored as different types in MongoDB
+        if isinstance(file_content, str):
+            import base64
+            file_content = base64.b64decode(file_content)
+        elif hasattr(file_content, 'read'):
+            file_content = file_content.read()
+        # Decompress if gzip-compressed (check magic bytes)
+        if file_content[:2] == b'\x1f\x8b':
+            try:
+                file_content = gzip_mod.decompress(file_content)
+            except Exception:
+                pass  # Use as-is if decompression fails
         mime_type = get_mime_type(paper.file_name)
         return Response(
-            content=paper.file_data,
+            content=file_content,
             media_type=mime_type,
             headers={"Content-Disposition": f'attachment; filename="{paper.file_name}"'}
         )
