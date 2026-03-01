@@ -518,6 +518,41 @@ def safe_datetime(val, default_now=True):
             pass
     return datetime.now(timezone.utc) if default_now else None
 
+def serialize_course(course) -> dict:
+    """Safely serialize a course object to CourseResponse-compatible dict."""
+    return {
+        "id": getattr(course, "id", 0),
+        "code": getattr(course, "code", ""),
+        "name": getattr(course, "name", ""),
+        "description": getattr(course, "description", None),
+        "created_at": safe_datetime(getattr(course, "created_at", None)),
+        "updated_at": safe_datetime(getattr(course, "updated_at", None)),
+    }
+
+def serialize_challenge(c) -> dict:
+    """Safely serialize a DailyChallenge to DailyChallengeResponse-compatible dict."""
+    return {
+        "id": getattr(c, "id", 0),
+        "course_id": getattr(c, "course_id", 0),
+        "date": getattr(c, "date", ""),
+        "question": getattr(c, "question", ""),
+        "code_snippet": getattr(c, "code_snippet", ""),
+        "explanation": getattr(c, "explanation", ""),
+        "media_link": getattr(c, "media_link", None),
+        "created_at": safe_datetime(getattr(c, "created_at", None)),
+    }
+
+def serialize_announcement(a) -> dict:
+    """Safely serialize a CodingAnnouncement to CodingAnnouncementResponse-compatible dict."""
+    return {
+        "id": getattr(a, "id", 0),
+        "course_id": getattr(a, "course_id", None),
+        "title": getattr(a, "title", ""),
+        "content": getattr(a, "content", ""),
+        "attachment_url": getattr(a, "attachment_url", None),
+        "created_at": safe_datetime(getattr(a, "created_at", None)),
+    }
+
 def serialize_user(user) -> dict:
     """Safely serialize a user object (FakeModelInstance or SQLAlchemy model) to UserResponse-compatible dict.
     This handles the MongoDB FakeModelInstance which doesn't serialize cleanly with Pydantic from_attributes."""
@@ -1591,7 +1626,7 @@ def create_course(course: CourseCreate, db: Session = Depends(get_db), admin: Us
     db.refresh(db_course)
     # Clear courses cache
     clear_cache("courses")
-    return db_course
+    return CourseResponse(**serialize_course(db_course))
 
 @app.get("/courses", response_model=List[CourseResponse])
 def get_courses(db: Session = Depends(get_db)):
@@ -1603,7 +1638,7 @@ def get_courses(db: Session = Depends(get_db)):
     
     courses = db.query(Course).order_by(Course.code).all()
     set_cached(cache_key, courses, _cache_ttl['courses'])
-    return courses
+    return [CourseResponse(**serialize_course(c)) for c in courses]
 
 @app.post("/courses/check-or-create")
 def check_or_create_course(
@@ -1617,7 +1652,7 @@ def check_or_create_course(
     if existing_course:
         return {
             "exists": True,
-            "course": CourseResponse.from_orm(existing_course)
+            "course": CourseResponse(**serialize_course(existing_course))
         }
     
     return {
@@ -1639,7 +1674,7 @@ def create_course_for_paper(
         return {
             "created": False,
             "message": "Course already exists",
-            "course": CourseResponse.from_orm(existing)
+            "course": CourseResponse(**serialize_course(existing))
         }
     
     # Create new course
@@ -1655,7 +1690,7 @@ def create_course_for_paper(
     return {
         "created": True,
         "message": "New course created successfully",
-        "course": CourseResponse.from_orm(new_course)
+        "course": CourseResponse(**serialize_course(new_course))
     }
 
 @app.get("/courses/{course_id}", response_model=CourseResponse)
@@ -1664,7 +1699,7 @@ def get_course(course_id: int, db: Session = Depends(get_db)):
     course = db.query(Course).filter(Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    return course
+    return CourseResponse(**serialize_course(course))
 
 @app.put("/courses/{course_id}", response_model=CourseResponse)
 def update_course(
@@ -1692,7 +1727,7 @@ def update_course(
     course.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(course)
-    return course
+    return CourseResponse(**serialize_course(course))
 
 @app.delete("/courses/{course_id}")
 def delete_course(course_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
@@ -1753,7 +1788,7 @@ def create_challenge(challenge: DailyChallengeCreate, db: Session = Depends(get_
     db.add(db_challenge)
     db.commit()
     db.refresh(db_challenge)
-    return db_challenge
+    return DailyChallengeResponse(**serialize_challenge(db_challenge))
 
 @app.put("/challenges/{challenge_id}", response_model=DailyChallengeResponse)
 def update_challenge(
@@ -1769,14 +1804,14 @@ def update_challenge(
     
     update_data = challenge_update.dict(exclude_unset=True)
     if not update_data:
-        return challenge
+        return DailyChallengeResponse(**serialize_challenge(challenge))
 
     for field, value in update_data.items():
         setattr(challenge, field, value)
     
     db.commit()
     db.refresh(challenge)
-    return challenge
+    return DailyChallengeResponse(**serialize_challenge(challenge))
 
 @app.delete("/challenges/{challenge_id}")
 def delete_challenge(challenge_id: int, db: Session = Depends(get_db), admin: User = Depends(require_coding_admin)):
@@ -1796,7 +1831,7 @@ def get_all_challenges_admin(
 ):
     """Admin: Get all challenges for management"""
     challenges = db.query(DailyChallenge).order_by(DailyChallenge.date.desc()).all()
-    return challenges
+    return [DailyChallengeResponse(**serialize_challenge(c)) for c in challenges]
 
 @app.get("/admin/contests", response_model=List[ContestResponse])
 def get_all_contests(db: Session = Depends(get_db), admin: User = Depends(require_coding_admin)):
@@ -2873,7 +2908,8 @@ def get_coding_announcements(
     query = db.query(CodingAnnouncement)
     if course_id:
         query = query.filter(or_(CodingAnnouncement.course_id == course_id, CodingAnnouncement.course_id == None))
-    return query.order_by(CodingAnnouncement.created_at.desc()).all()
+    results = query.order_by(CodingAnnouncement.created_at.desc()).all()
+    return [CodingAnnouncementResponse(**serialize_announcement(a)) for a in results]
 
 @app.post("/admin/coding-announcements", response_model=CodingAnnouncementResponse)
 async def create_coding_announcement(
@@ -2918,7 +2954,7 @@ async def create_coding_announcement(
     db.add(announcement)
     db.commit()
     db.refresh(announcement)
-    return announcement
+    return CodingAnnouncementResponse(**serialize_announcement(announcement))
 
 @app.delete("/admin/coding-announcements/{announcement_id}")
 def delete_coding_announcement(
