@@ -6,6 +6,10 @@ import urllib.parse
 class Base:
     metadata = type("Metadata", (), {"create_all": lambda *a, **k: None})()
     
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+    
 def declarative_base():
     return Base
 
