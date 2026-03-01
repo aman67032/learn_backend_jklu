@@ -1272,7 +1272,7 @@ def create_admin(user: UserCreate, db: Session = Depends(get_db)):
                 db_user.password_hash = get_password_hash(user.password)
             db.commit()
             db.refresh(db_user)
-            return db_user
+            return UserResponse(**serialize_user(db_user))
         else:
             raise HTTPException(status_code=400, detail="User is already an admin")
     
@@ -1288,7 +1288,7 @@ def create_admin(user: UserCreate, db: Session = Depends(get_db)):
     db.add(admin_user)
     db.commit()
     db.refresh(admin_user)
-    return admin_user
+    return UserResponse(**serialize_user(admin_user))
 
 @app.post("/login", response_model=Token)
 def login(request: LoginRequest, db: Session = Depends(get_db)):
@@ -1353,38 +1353,7 @@ def admin_login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
 @app.get("/me", response_model=UserResponse)
 def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current logged in user info"""
-    try:
-        # Manually construct the response dict to avoid serialization issues
-        # with FakeModelInstance and @property attributes
-        user_data = {
-            "id": getattr(current_user, "id", 0),
-            "email": getattr(current_user, "email", ""),
-            "name": getattr(current_user, "name", ""),
-            "is_admin": getattr(current_user, "is_admin", False),
-            "admin_role": getattr(current_user, "admin_role", None),
-            "is_sub_admin": getattr(current_user, "is_sub_admin", False),
-            "email_verified": getattr(current_user, "email_verified", False),
-            "age": getattr(current_user, "age", None),
-            "year": getattr(current_user, "year", None),
-            "university": getattr(current_user, "university", None),
-            "department": getattr(current_user, "department", None),
-            "roll_no": getattr(current_user, "roll_no", None),
-            "student_id": getattr(current_user, "student_id", None),
-            "photo_path": getattr(current_user, "photo_path", None),
-            "id_card_path": getattr(current_user, "id_card_path", None),
-            "id_verified": getattr(current_user, "id_verified", False),
-            "created_at": getattr(current_user, "created_at", datetime.now(timezone.utc)),
-            "admin_feedback": getattr(current_user, "admin_feedback", None),
-        }
-        return UserResponse(**user_data)
-    except Exception as e:
-        print(f"[ERROR] /me serialization error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error serializing user data: {str(e)}"
-        )
+    return UserResponse(**serialize_user(current_user))
 
 # ========== Forgot Password Endpoints ==========
 @app.post("/forgot-password")
@@ -1493,7 +1462,7 @@ def update_profile(update: ProfileUpdate, db: Session = Depends(get_db), current
         setattr(user, field, value)
     db.commit()
     db.refresh(user)
-    return user
+    return UserResponse(**serialize_user(user))
 
 
 @app.post("/profile/id-card", response_model=UserResponse)
@@ -1518,7 +1487,7 @@ async def upload_id_card(
     current_user.verified_at = None
     db.commit()
     db.refresh(current_user)
-    return current_user
+    return UserResponse(**serialize_user(current_user))
 
 
 @app.get("/admin/verification-requests", response_model=List[UserResponse])
@@ -1531,7 +1500,7 @@ def list_verification_requests(db: Session = Depends(get_db), admin: User = Depe
         ),
         User.id_verified == False
     ).all()
-    return users
+    return [UserResponse(**serialize_user(u)) for u in users]
 
 
 class VerifyAction(BaseModel):
@@ -1567,7 +1536,7 @@ def verify_user(user_id: int, action: VerifyAction, db: Session = Depends(get_db
     
     db.commit()
     db.refresh(user)
-    return user
+    return UserResponse(**serialize_user(user))
 
 # ========== Admin Dashboard ==========
 @app.get("/admin/dashboard", response_model=DashboardStats)
