@@ -10,6 +10,14 @@ class Base:
         for key, value in kwargs.items():
             setattr(self, key, value)
     
+    def dict(self):
+        """Serialize model instance to dict for MongoDB insertion."""
+        d = {}
+        for k in dir(self):
+            if not k.startswith("_") and not callable(getattr(self, k)) and k != "metadata":
+                d[k] = getattr(self, k)
+        return d
+    
 def declarative_base():
     return Base
 
