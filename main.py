@@ -1265,50 +1265,57 @@ def email_health_check():
 @app.post("/register", response_model=RegisterVerifyResponse)
 def register(request: RegisterRequest, db: Session = Depends(get_db)):
     """Register a new user - Create account directly"""
-    # Validate email domain - must be @jklu.edu.in
-    if not request.email.endswith("@jklu.edu.in"):
-        raise HTTPException(
-            status_code=400, 
-            detail="Only @jklu.edu.in email addresses are allowed for registration"
+    try:
+        # Validate email domain - must be @jklu.edu.in
+        if not request.email.endswith("@jklu.edu.in"):
+            raise HTTPException(
+                status_code=400, 
+                detail="Only @jklu.edu.in email addresses are allowed for registration"
+            )
+        
+        # Validate password match
+        if request.password != request.confirm_password:
+            raise HTTPException(status_code=400, detail="Passwords do not match")
+        
+        # Check if user already exists
+        db_user = db.query(User).filter(User.email == request.email).first()
+        if db_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # Validate password strength
+        if len(request.password) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        
+        # Create new user directly
+        hashed_password = get_password_hash(request.password)
+        new_user = User(
+            email=request.email,
+            name=request.name,
+            password_hash=hashed_password,
+            is_admin=False,
+            email_verified=True
         )
-    
-    # Validate password match
-    if request.password != request.confirm_password:
-        raise HTTPException(status_code=400, detail="Passwords do not match")
-    
-    # Check if user already exists
-    db_user = db.query(User).filter(User.email == request.email).first()
-    if db_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    
-    # Validate password strength (optional - add more validation if needed)
-    if len(request.password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-    
-    # Create new user directly
-    hashed_password = get_password_hash(request.password)
-    new_user = User(
-        email=request.email,
-        name=request.name,
-        password_hash=hashed_password,
-        is_admin=False,
-        email_verified=True
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    # Generate token
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": new_user.email}, expires_delta=access_token_expires
-    )
-    
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": UserResponse(**serialize_user(new_user))
-    }
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        # Generate token
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": new_user.email}, expires_delta=access_token_expires
+        )
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": UserResponse(**serialize_user(new_user))
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Registration error: {str(e)}")
 
 
 @app.post("/create-admin", response_model=UserResponse)
