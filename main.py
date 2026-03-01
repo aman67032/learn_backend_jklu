@@ -1320,7 +1320,38 @@ def admin_login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
 @app.get("/me", response_model=UserResponse)
 def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current logged in user info"""
-    return current_user
+    try:
+        # Manually construct the response dict to avoid serialization issues
+        # with FakeModelInstance and @property attributes
+        user_data = {
+            "id": getattr(current_user, "id", 0),
+            "email": getattr(current_user, "email", ""),
+            "name": getattr(current_user, "name", ""),
+            "is_admin": getattr(current_user, "is_admin", False),
+            "admin_role": getattr(current_user, "admin_role", None),
+            "is_sub_admin": getattr(current_user, "is_sub_admin", False),
+            "email_verified": getattr(current_user, "email_verified", False),
+            "age": getattr(current_user, "age", None),
+            "year": getattr(current_user, "year", None),
+            "university": getattr(current_user, "university", None),
+            "department": getattr(current_user, "department", None),
+            "roll_no": getattr(current_user, "roll_no", None),
+            "student_id": getattr(current_user, "student_id", None),
+            "photo_path": getattr(current_user, "photo_path", None),
+            "id_card_path": getattr(current_user, "id_card_path", None),
+            "id_verified": getattr(current_user, "id_verified", False),
+            "created_at": getattr(current_user, "created_at", datetime.now(timezone.utc)),
+            "admin_feedback": getattr(current_user, "admin_feedback", None),
+        }
+        return UserResponse(**user_data)
+    except Exception as e:
+        print(f"[ERROR] /me serialization error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error serializing user data: {str(e)}"
+        )
 
 # ========== Forgot Password Endpoints ==========
 @app.post("/forgot-password")

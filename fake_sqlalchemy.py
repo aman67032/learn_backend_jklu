@@ -110,17 +110,20 @@ class FakeModelInstance:
         return d
         
     def __getattr__(self, name):
+        # Handle @property attributes on the model class (e.g., is_sub_admin)
+        attr = getattr(self._model_class, name, None)
+        if isinstance(attr, property):
+            try:
+                return attr.fget(self)
+            except Exception:
+                pass
+
         # Handle relationships like "questions" based on the parent instance
         if not self._session:
             return [] if name.endswith("s") else None
             
         try:
-            # Check if this property maps to a relationship in the class
-            attr = getattr(self._model_class, name, None)
-            if not isinstance(attr, property):
-                return [] if name.endswith("s") else None
-                
-            # If so, aggressively fetch related docs
+            # If it's a property, try to fetch related docs
             # Simple heuristic: contests have questions, courses have papers
             if name == "questions":
                 docs = self._session.db["contest_questions"].find({"contest_id": self.id})
