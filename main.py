@@ -2146,53 +2146,53 @@ def get_papers(
     current_user: User = Depends(get_current_user)
 ):
     """Get papers with filters"""
-    query = db.query(Paper)
-    
-    # If my_papers_only is requested, filter to only user's papers
-    if my_papers_only:
-        query = query.filter(Paper.uploaded_by == current_user.id)
-    elif not current_user.is_admin:
-        # Non-admins (logged-in students) can see:
-        # - All approved papers (from any user)
-        # - Their own papers that were rejected by admin
-        query = query.filter(
-            or_(
-                Paper.status == SubmissionStatus.APPROVED,  # All approved papers
-                and_(
-                    Paper.uploaded_by == current_user.id,
-                    Paper.status == SubmissionStatus.REJECTED
-                )  # Or their own rejected papers
+    try:
+        query = db.query(Paper)
+        
+        # If my_papers_only is requested, filter to only user's papers
+        if my_papers_only:
+            query = query.filter(Paper.uploaded_by == current_user.id)
+        elif not current_user.is_admin:
+            # Non-admins (logged-in students) can see:
+            # - All approved papers (from any user)
+            # - Their own papers that were rejected by admin
+            query = query.filter(
+                or_(
+                    Paper.status == SubmissionStatus.APPROVED,  # All approved papers
+                    and_(
+                        Paper.uploaded_by == current_user.id,
+                        Paper.status == SubmissionStatus.REJECTED
+                    )  # Or their own rejected papers
+                )
             )
-        )
-    elif status:
-        # Admins can filter by status
-        query = query.filter(Paper.status == status)
-    
-
-
-
-
-
-    
-    # Apply filters
-    if course_id:
-        query = query.filter(Paper.course_id == course_id)
-    if paper_type:
-        query = query.filter(Paper.paper_type == paper_type)
-    if year:
-        query = query.filter(Paper.year == year)
-    if semester:
-        query = query.filter(Paper.semester == semester)
-    if department:
-        query = query.filter(Paper.department == department)
-    
-    # Optimize: Use eager loading to avoid N+1 queries
-    papers = query.options(
-        joinedload(Paper.course),
-        joinedload(Paper.uploader)
-    ).order_by(Paper.uploaded_at.desc()).all()
-    
-    return [format_paper_response(paper, current_user.is_admin) for paper in papers]
+        elif status:
+            # Admins can filter by status
+            query = query.filter(Paper.status == status)
+        
+        # Apply filters
+        if course_id:
+            query = query.filter(Paper.course_id == course_id)
+        if paper_type:
+            query = query.filter(Paper.paper_type == paper_type)
+        if year:
+            query = query.filter(Paper.year == year)
+        if semester:
+            query = query.filter(Paper.semester == semester)
+        if department:
+            query = query.filter(Paper.department == department)
+        
+        # Optimize: Use eager loading to avoid N+1 queries
+        papers = query.options(
+            joinedload(Paper.course),
+            joinedload(Paper.uploader)
+        ).order_by(Paper.uploaded_at.desc()).all()
+        
+        return [format_paper_response(paper, current_user.is_admin) for paper in papers]
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] /papers endpoint error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Papers error: {str(e)}")
 
 @app.get("/papers/pending", response_model=List[PaperResponse])
 def get_pending_papers(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
