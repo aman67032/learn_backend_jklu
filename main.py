@@ -507,6 +507,17 @@ class UserResponse(BaseModel):
         """Normalize file paths to just filename"""
         return normalize_file_path(v) if v else None
 
+def safe_datetime(val, default_now=True):
+    """Safely coerce a value to datetime, handling MongoDB string dates."""
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, str):
+        try:
+            return datetime.fromisoformat(val.replace("Z", "+00:00"))
+        except Exception:
+            pass
+    return datetime.now(timezone.utc) if default_now else None
+
 def serialize_user(user) -> dict:
     """Safely serialize a user object (FakeModelInstance or SQLAlchemy model) to UserResponse-compatible dict.
     This handles the MongoDB FakeModelInstance which doesn't serialize cleanly with Pydantic from_attributes."""
@@ -674,17 +685,24 @@ class QuestionResponse(BaseModel):
     @classmethod
     def from_orm_with_languages(cls, question):
         """Create response with available_languages extracted from code_snippets"""
+        code_snippets = getattr(question, "code_snippets", None) or {}
+        if isinstance(code_snippets, str):
+            import json
+            try:
+                code_snippets = json.loads(code_snippets)
+            except Exception:
+                code_snippets = {}
         data = {
-            "id": question.id,
-            "contest_id": question.contest_id,
-            "order": question.order,
-            "title": question.title,
-            "question": question.question,
-            "code_snippets": question.code_snippets,
-            "available_languages": list(question.code_snippets.keys()) if question.code_snippets else [],
-            "explanation": question.explanation,
-            "media_link": question.media_link,
-            "created_at": question.created_at
+            "id": getattr(question, "id", 0),
+            "contest_id": getattr(question, "contest_id", 0),
+            "order": getattr(question, "order", 0),
+            "title": getattr(question, "title", ""),
+            "question": getattr(question, "question", ""),
+            "code_snippets": code_snippets,
+            "available_languages": list(code_snippets.keys()) if code_snippets else [],
+            "explanation": getattr(question, "explanation", ""),
+            "media_link": getattr(question, "media_link", None),
+            "created_at": safe_datetime(getattr(question, "created_at", None))
         }
         return cls(**data)
 
@@ -1794,7 +1812,7 @@ def get_all_contests(db: Session = Depends(get_db), admin: User = Depends(requir
             date=contest.date,
             title=contest.title,
             description=contest.description,
-            created_at=contest.created_at,
+            created_at=safe_datetime(contest.created_at),
             questions=response_questions
         ))
     return result
@@ -1803,7 +1821,12 @@ def get_all_contests(db: Session = Depends(get_db), admin: User = Depends(requir
 def get_course_challenges(course_id: int, db: Session = Depends(get_db)):
     """Get all challenges for a specific course"""
     challenges = db.query(DailyChallenge).filter(DailyChallenge.course_id == course_id).order_by(DailyChallenge.id).all()
-    return challenges
+    return [DailyChallengeResponse(
+        id=c.id, course_id=c.course_id, date=getattr(c, "date", ""),
+        question=getattr(c, "question", ""), code_snippet=getattr(c, "code_snippet", ""),
+        explanation=getattr(c, "explanation", ""), media_link=getattr(c, "media_link", None),
+        created_at=safe_datetime(c.created_at)
+    ) for c in challenges]
 
 @app.get("/challenges/{challenge_id}", response_model=DailyChallengeResponse)
 def get_challenge(challenge_id: int, db: Session = Depends(get_db)):
@@ -1811,7 +1834,12 @@ def get_challenge(challenge_id: int, db: Session = Depends(get_db)):
     challenge = db.query(DailyChallenge).filter(DailyChallenge.id == challenge_id).first()
     if not challenge:
         raise HTTPException(status_code=404, detail="Challenge not found")
-    return challenge
+    return DailyChallengeResponse(
+        id=challenge.id, course_id=challenge.course_id, date=getattr(challenge, "date", ""),
+        question=getattr(challenge, "question", ""), code_snippet=getattr(challenge, "code_snippet", ""),
+        explanation=getattr(challenge, "explanation", ""), media_link=getattr(challenge, "media_link", None),
+        created_at=safe_datetime(challenge.created_at)
+    )
 
 
 # ========== New Contest Endpoints (Hybrid Approach) ==========
@@ -1875,14 +1903,15 @@ def get_course_contests(course_id: int, db: Session = Depends(get_db)):
     
     result = []
     for contest in contests:
-        response_questions = [QuestionResponse.from_orm_with_languages(q) for q in contest.questions]
+        questions_list = getattr(contest, "questions", None) or []
+        response_questions = [QuestionResponse.from_orm_with_languages(q) for q in questions_list]
         result.append(ContestResponse(
             id=contest.id,
             course_id=contest.course_id,
-            date=contest.date,
-            title=contest.title,
-            description=contest.description,
-            created_at=contest.created_at,
+            date=getattr(contest, "date", ""),
+            title=getattr(contest, "title", None),
+            description=getattr(contest, "description", None),
+            created_at=safe_datetime(contest.created_at),
             questions=response_questions
         ))
     return result
@@ -1894,14 +1923,15 @@ def get_contest(contest_id: int, db: Session = Depends(get_db)):
     if not contest:
         raise HTTPException(status_code=404, detail="Contest not found")
         
-    response_questions = [QuestionResponse.from_orm_with_languages(q) for q in contest.questions]
+    questions_list = getattr(contest, "questions", None) or []
+    response_questions = [QuestionResponse.from_orm_with_languages(q) for q in questions_list]
     return ContestResponse(
         id=contest.id,
         course_id=contest.course_id,
-        date=contest.date,
-        title=contest.title,
-        description=contest.description,
-        created_at=contest.created_at,
+        date=getattr(contest, "date", ""),
+        title=getattr(contest, "title", None),
+        description=getattr(contest, "description", None),
+        created_at=safe_datetime(contest.created_at),
         questions=response_questions
     )
 
