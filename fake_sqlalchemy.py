@@ -13,9 +13,10 @@ class Base:
     def dict(self):
         """Serialize model instance to dict for MongoDB insertion."""
         d = {}
-        for k in dir(self):
-            if not k.startswith("_") and not callable(getattr(self, k)) and k != "metadata":
+        for k in list(vars(self).keys()):
+            if not k.startswith("_"):
                 d[k] = getattr(self, k)
+        d.pop("metadata", None)
         return d
     
 def declarative_base():
