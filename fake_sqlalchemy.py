@@ -7,6 +7,17 @@ class Base:
     metadata = type("Metadata", (), {"create_all": lambda *a, **k: None})()
     
     def __init__(self, **kwargs):
+        # Apply defaults for missing attributes attached to the model class (prevent Column leakage)
+        for k in dir(self.__class__):
+            if not k.startswith("_"):
+                attr = getattr(self.__class__, k)
+                if getattr(attr, "__class__", None) and attr.__class__.__name__ == 'Column':
+                    if attr.default is not None:
+                        val = attr.default() if callable(attr.default) else attr.default
+                        setattr(self, k, val)
+                    else:
+                        setattr(self, k, None)
+
         for key, value in kwargs.items():
             setattr(self, key, value)
     
