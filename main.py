@@ -2758,14 +2758,14 @@ def format_paper_response(paper: Paper, include_private_info: bool = False):
     raw_paper_type = getattr(paper, "paper_type", None)
     if isinstance(raw_paper_type, str):
         try:
-            raw_paper_type = PaperType(raw_paper_type)
+            raw_paper_type = PaperType(raw_paper_type.lower())
         except ValueError:
             raw_paper_type = PaperType.OTHER
     
     raw_status = getattr(paper, "status", None)
     if isinstance(raw_status, str):
         try:
-            raw_status = SubmissionStatus(raw_status)
+            raw_status = SubmissionStatus(raw_status.lower())
         except ValueError:
             raw_status = SubmissionStatus.PENDING
     
