@@ -38,6 +38,10 @@ class Column:
         return (self, -1)
     def asc(self):
         return (self, 1)
+    def isnot(self, other):
+        return Condition(self, "isnot", other)
+    def is_(self, other):
+        return Condition(self, "is", other)
 
 class Condition:
     def __init__(self, field, op, val):
@@ -184,6 +188,10 @@ class Query:
              return {field_name: {"$lt": cond.val}}
         elif cond.op == "<=":
              return {field_name: {"$lte": cond.val}}
+        elif cond.op == "isnot":
+             return {field_name: {"$ne": cond.val}}
+        elif cond.op == "is":
+             return {field_name: cond.val}
         return {}
 
     def filter(self, *conditions):
