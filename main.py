@@ -507,6 +507,39 @@ class UserResponse(BaseModel):
         """Normalize file paths to just filename"""
         return normalize_file_path(v) if v else None
 
+def serialize_user(user) -> dict:
+    """Safely serialize a user object (FakeModelInstance or SQLAlchemy model) to UserResponse-compatible dict.
+    This handles the MongoDB FakeModelInstance which doesn't serialize cleanly with Pydantic from_attributes."""
+    created_at = getattr(user, "created_at", None)
+    if isinstance(created_at, str):
+        try:
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except Exception:
+            created_at = datetime.now(timezone.utc)
+    elif created_at is None:
+        created_at = datetime.now(timezone.utc)
+    
+    return {
+        "id": getattr(user, "id", 0),
+        "email": getattr(user, "email", ""),
+        "name": getattr(user, "name", ""),
+        "is_admin": getattr(user, "is_admin", False),
+        "admin_role": getattr(user, "admin_role", None),
+        "is_sub_admin": getattr(user, "is_sub_admin", False),
+        "email_verified": getattr(user, "email_verified", False),
+        "age": getattr(user, "age", None),
+        "year": getattr(user, "year", None),
+        "university": getattr(user, "university", None),
+        "department": getattr(user, "department", None),
+        "roll_no": getattr(user, "roll_no", None),
+        "student_id": getattr(user, "student_id", None),
+        "photo_path": getattr(user, "photo_path", None),
+        "id_card_path": getattr(user, "id_card_path", None),
+        "id_verified": getattr(user, "id_verified", False),
+        "created_at": created_at,
+        "admin_feedback": getattr(user, "admin_feedback", None),
+    }
+
 class RegisterVerifyResponse(BaseModel):
     access_token: str
     token_type: str
