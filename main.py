@@ -2710,6 +2710,38 @@ def format_paper_response(paper: Paper, include_private_info: bool = False):
     if paper.public_link_id:
         public_url = f"{PUBLIC_BASE_URL}/public/papers/{paper.public_link_id}"
     
+    # Safely coerce paper_type and status from MongoDB strings to enum values
+    raw_paper_type = getattr(paper, "paper_type", None)
+    if isinstance(raw_paper_type, str):
+        try:
+            raw_paper_type = PaperType(raw_paper_type)
+        except ValueError:
+            raw_paper_type = PaperType.OTHER
+    
+    raw_status = getattr(paper, "status", None)
+    if isinstance(raw_status, str):
+        try:
+            raw_status = SubmissionStatus(raw_status)
+        except ValueError:
+            raw_status = SubmissionStatus.PENDING
+    
+    # Safely coerce datetime fields from MongoDB strings
+    uploaded_at = getattr(paper, "uploaded_at", None)
+    if isinstance(uploaded_at, str):
+        try:
+            uploaded_at = datetime.fromisoformat(uploaded_at.replace("Z", "+00:00"))
+        except Exception:
+            uploaded_at = datetime.now(timezone.utc)
+    elif uploaded_at is None:
+        uploaded_at = datetime.now(timezone.utc)
+    
+    reviewed_at = getattr(paper, "reviewed_at", None)
+    if isinstance(reviewed_at, str):
+        try:
+            reviewed_at = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
+        except Exception:
+            reviewed_at = None
+    
     paper_dict = {
         "id": paper.id,
         "course_id": paper.course_id,
@@ -2720,18 +2752,18 @@ def format_paper_response(paper: Paper, include_private_info: bool = False):
         "uploader_email": paper.uploader.email if (paper.uploader and include_private_info) else None,
         "title": paper.title,
         "description": paper.description,
-        "paper_type": paper.paper_type,
+        "paper_type": raw_paper_type,
         "year": paper.year,
         "semester": paper.semester,
         "department": paper.department,
         "file_name": paper.file_name or "",  # Ensure file_name is never None
         "file_size": paper.file_size,
         "file_path": file_path,  # Normalized to just filename, never None
-        "status": paper.status,
-        "uploaded_at": paper.uploaded_at,
-        "reviewed_at": paper.reviewed_at,
+        "status": raw_status,
+        "uploaded_at": uploaded_at,
+        "reviewed_at": reviewed_at,
         "rejection_reason": paper.rejection_reason if include_private_info else None,
-        "admin_feedback": paper.admin_feedback if (include_private_info or paper.status == SubmissionStatus.REJECTED) else None,
+        "admin_feedback": paper.admin_feedback if (include_private_info or raw_status == SubmissionStatus.REJECTED) else None,
         "public_link_id": paper.public_link_id,
         "public_url": public_url
     }
