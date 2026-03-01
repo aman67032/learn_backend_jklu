@@ -286,7 +286,7 @@ class Session:
         for inst in self._new_objects:
             collection = self.db[inst.__tablename__]
             doc = inst.dict()
-            if not getattr(inst, 'id', None):
+            if "id" not in doc:
                 # We need to auto-generate integer IDs since SQL did this
                 # Workaround: find max ID in collection + 1
                 max_doc = collection.find().sort("id", -1).limit(1)
