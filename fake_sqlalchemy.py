@@ -145,7 +145,9 @@ class FakeModelInstance:
         attr = getattr(self._model_class, name, None)
         if isinstance(attr, property):
             try:
-                return attr.fget(self)
+                val = attr.fget(self)
+                if val is not None:
+                    return val
             except Exception:
                 pass
 
