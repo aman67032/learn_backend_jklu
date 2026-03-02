@@ -1757,7 +1757,7 @@ async def upload_challenge_media(
     """Admin: Upload media for a challenge"""
     # Create unique filename
     file_ext = os.path.splitext(file.filename)[1]
-    filename = f"{uuid4()}{file_ext}"
+    filename = f"{uuid.uuid4()}{file_ext}"
     file_path = UPLOAD_DIR / filename
     
     # Save file
@@ -1777,7 +1777,7 @@ async def upload_challenge_media(
     # Looking at main.py lines 1621+, papers are uploaded but how are they served?
     # I'll enable static serving of uploads dir if not present, or assume /uploads/filename works.
     
-    media_url = f"{API_BASE_URL}/uploads/{filename}" if API_BASE_URL else f"/uploads/{filename}"
+    media_url = f"{PUBLIC_BASE_URL}/uploads/{filename}" if PUBLIC_BASE_URL else f"/uploads/{filename}"
     # Actually, simpler to return just relative path if frontend handles it, 
     # but HostDashboard line 90 sets formData.media_link = response.data.media_link
     

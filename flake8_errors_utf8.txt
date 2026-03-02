@@ -1,0 +1,3 @@
+﻿.\main.py:1760:19: F821 undefined name 'uuid4'
+.\main.py:1780:20: F821 undefined name 'API_BASE_URL'
+.\main.py:1780:57: F821 undefined name 'API_BASE_URL'
