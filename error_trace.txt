@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "C:\Users\MSI1\Downloads\New folder (3)\New folder\ExamPaperPortal\test_serialize.py", line 35, in test_exception
+    resp = UserResponse(**result)
+  File "C:\Users\MSI1\AppData\Local\Programs\Python\Python313\Lib\site-packages\pydantic\main.py", line 250, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+pydantic_core._pydantic_core.ValidationError: 1 validation error for UserResponse
+id_verified
+  Input should be a valid boolean [type=bool_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/bool_type

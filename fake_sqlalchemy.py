@@ -138,6 +138,9 @@ class FakeModelInstance:
         return d
         
     def __getattr__(self, name):
+        if name == "__tablename__":
+            return self._collection_name
+            
         # Handle @property attributes on the model class (e.g., is_sub_admin)
         attr = getattr(self._model_class, name, None)
         if isinstance(attr, property):
@@ -260,7 +263,10 @@ class Query:
         doc = cursor.limit(1)
         res = list(doc)
         if res:
-            return FakeModelInstance(res[0], self.model, self.session)
+            obj = FakeModelInstance(res[0], self.model, self.session)
+            if obj not in self.session._new_objects:
+                self.session._new_objects.append(obj)
+            return obj
         return None
 
     def all(self):
@@ -268,7 +274,11 @@ class Query:
         if self._sort: cursor = cursor.sort(self._sort)
         if self._offset: cursor = cursor.skip(self._offset)
         if self._limit: cursor = cursor.limit(self._limit)
-        return [FakeModelInstance(doc, self.model, self.session) for doc in cursor]
+        results = [FakeModelInstance(doc, self.model, self.session) for doc in cursor]
+        for obj in results:
+            if obj not in self.session._new_objects:
+                self.session._new_objects.append(obj)
+        return results
 
     def count(self):
         return self.collection.count_documents(self.query_filter)
