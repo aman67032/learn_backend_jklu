@@ -123,7 +123,10 @@ optional_oauth2_scheme = HTTPBearer(auto_error=False)
 # Create uploads directory
 UPLOAD_DIR_STR = os.getenv("UPLOAD_DIR", "uploads")
 UPLOAD_DIR = Path(UPLOAD_DIR_STR)
-UPLOAD_DIR.mkdir(exist_ok=True)
+try:
+    UPLOAD_DIR.mkdir(exist_ok=True)
+except OSError:
+    pass
 
 # In-memory password reset data storage (use Redis for production)
 password_reset_storage = {}
