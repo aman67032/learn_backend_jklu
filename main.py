@@ -320,7 +320,10 @@ class CodingAnnouncement(Base):
     course_id = Column(Integer, ForeignKey("courses.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
-    attachment_url = Column(String(500), nullable=True)  # URL/Path to file
+    attachment_url = Column(String(500), nullable=True)  # URL/Path to file (kept for compatibility)
+    file_data = Column(LargeBinary, nullable=True)     # Store file content in database
+    file_name = Column(String(255), nullable=True)
+    file_size = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -557,6 +560,8 @@ def serialize_announcement(a) -> dict:
         "title": getattr(a, "title", ""),
         "content": getattr(a, "content", ""),
         "attachment_url": getattr(a, "attachment_url", None),
+        "file_name": getattr(a, "file_name", None),
+        "file_size": getattr(a, "file_size", None),
         "created_at": safe_datetime(getattr(a, "created_at", None)),
     }
 
@@ -763,6 +768,7 @@ class ContestUpdate(BaseModel):
     date: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
+    questions: Optional[List[QuestionCreate]] = None
 
 class ContestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -2079,12 +2085,12 @@ def update_contest(
     db: Session = Depends(get_db), 
     admin: User = Depends(require_coding_admin)
 ):
-    """Admin: Update contest metadata (date, title, description)"""
+    """Admin: Update contest metadata and/or questions"""
     db_contest = db.query(DailyContest).filter(DailyContest.id == contest_id).first()
     if not db_contest:
         raise HTTPException(status_code=404, detail="Contest not found")
     
-    # Update fields if provided
+    # Update metadata fields if provided
     if contest_update.date is not None:
         # Check if new date conflicts with existing contest
         existing = db.query(DailyContest).filter(
@@ -2102,6 +2108,25 @@ def update_contest(
     if contest_update.description is not None:
         db_contest.description = contest_update.description
     
+    # Replace questions if provided
+    if contest_update.questions is not None:
+        # Delete all existing questions for this contest
+        db.query(ContestQuestion).filter(ContestQuestion.contest_id == contest_id).delete()
+        db.flush()
+        
+        # Insert the new set of questions
+        for q_data in contest_update.questions:
+            db_question = ContestQuestion(
+                contest_id=contest_id,
+                order=q_data.order,
+                title=q_data.title,
+                question=q_data.question,
+                code_snippets=q_data.code_snippets,
+                explanation=q_data.explanation,
+                media_link=q_data.media_link
+            )
+            db.add(db_question)
+    
     db.commit()
     db.refresh(db_contest)
     
@@ -2116,6 +2141,7 @@ def update_contest(
         created_at=db_contest.created_at,
         questions=response_questions
     )
+
 
 @app.post("/contests/{contest_id}/questions", response_model=QuestionResponse)
 def add_question_to_contest(
@@ -3004,40 +3030,72 @@ async def create_coding_announcement(
     db: Session = Depends(get_db)
 ):
     # Check authorization (Coding TA or Admin)
-    # Note: user.is_sub_admin is basically user.admin_role == 'coding_ta'
     if not (current_user.is_admin or current_user.admin_role == 'coding_ta'):
         raise HTTPException(status_code=403, detail="Not authorized to post coding announcements")
     
+    file_name = None
+    file_data = None
+    file_size = None
     attachment_url = None
-    if file:
+    
+    if file and file.filename:
         # Validate file size (2MB limit)
         content_bytes = await file.read()
         if len(content_bytes) > 2 * 1024 * 1024:
              raise HTTPException(status_code=400, detail="File too large. Max size is 2MB.")
         
-        # Reset cursor
-        await file.seek(0)
+        file_name = file.filename
+        file_data = content_bytes
+        file_size = len(content_bytes)
+        attachment_url = file.filename # For compatibility
         
-        # Save file
-        file_ext = Path(file.filename).suffix
-        safe_filename = f"{uuid.uuid4()}{file_ext}"
-        file_path = UPLOAD_DIR / safe_filename
-        
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        attachment_url = str(safe_filename)
+        # Try to save to filesystem but ignore failures (Vercel)
+        try:
+             safe_filename = f"{uuid.uuid4()}{Path(file.filename).suffix}"
+             file_path = UPLOAD_DIR / safe_filename
+             with open(file_path, "wb") as buffer:
+                 buffer.write(content_bytes)
+             attachment_url = str(safe_filename)
+        except Exception as e:
+             print(f"Warning: Could not save announcement file to filesystem: {e}")
 
     announcement = CodingAnnouncement(
         title=title,
         content=content,
         course_id=course_id,
-        attachment_url=attachment_url
+        attachment_url=attachment_url,
+        file_name=file_name,
+        file_data=file_data,
+        file_size=file_size
     )
     db.add(announcement)
     db.commit()
     db.refresh(announcement)
     return CodingAnnouncementResponse(**serialize_announcement(announcement))
+
+@app.get("/coding-announcements/{announcement_id}/download")
+async def download_announcement_file(
+    announcement_id: int, 
+    db: Session = Depends(get_db)
+):
+    """Download announcement attachment from database"""
+    ann = db.query(CodingAnnouncement).filter(CodingAnnouncement.id == announcement_id).first()
+    if not ann or not ann.file_data:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    from fastapi.responses import Response
+    file_content = ann.file_data
+    # Handle bytes stored as string in MongoDB-style adapter if necessary
+    if isinstance(file_content, str):
+        import base64
+        file_content = base64.b64decode(file_content)
+        
+    mime_type = get_mime_type(ann.file_name or "attachment")
+    return Response(
+        content=file_content,
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{ann.file_name or "attachment"}"'}
+    )
 
 @app.delete("/admin/coding-announcements/{announcement_id}")
 def delete_coding_announcement(
