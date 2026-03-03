@@ -899,24 +899,21 @@ def require_admin(current_user: User = Depends(get_current_user)):
 def require_coding_admin(current_user: User = Depends(get_current_user)):
     """
     Allow access if user is:
-    1. Super Admin (admin_role is None)
-    2. Coding Hour TA (admin_role == 'coding_ta')
+    1. Super Admin (is_admin=True, admin_role is None)
+    2. Coding Hour TA (admin_role == 'coding_ta', may have is_admin=False)
     """
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
+    # Allow if user is a full admin
+    if current_user.is_admin:
+        # If admin_role is set, it must be 'coding_ta' (or None for super admin)
+        if current_user.admin_role and current_user.admin_role != 'coding_ta':
+            raise HTTPException(status_code=403, detail="Coding Hour Admin access required")
+        return current_user
     
-    # If admin_role is set, it must be 'coding_ta' (or None for super admin)
-    # A 'coding_ta' can only access this, but a Super Admin (None) can access everything.
-    # So if they have an admin_role, ensure it includes rights.
-    # For now, if they are admin, they are either Super or specific.
-    # If they are a 'coding_ta', they pass.
-    # If they are super admin (admin_role is None), they pass.
-    # If they are some other future role, maybe block? 
-    # For now, explicit check:
-    if current_user.admin_role and current_user.admin_role != 'coding_ta':
-         raise HTTPException(status_code=403, detail="Coding Hour Admin access required")
-         
-    return current_user
+    # Also allow coding_ta sub-admins (is_admin may be False but they have the role)
+    if current_user.admin_role == 'coding_ta':
+        return current_user
+    
+    raise HTTPException(status_code=403, detail="Admin access required")
 
 async def get_current_user_optional(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_oauth2_scheme), 
