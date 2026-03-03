@@ -309,15 +309,27 @@ class Session:
     def flush(self):
         # Assign IDs to new objects that don't have them yet
         # This is critical for dependencies (e.g., questions needing contest_id)
+        table_max_ids = {}
         for inst in self._new_objects:
-            doc = inst.dict() if hasattr(inst, "dict") else vars(inst)
+            table_name = inst.__tablename__
             if getattr(inst, "id", None) is None:
-                collection = self.db[inst.__tablename__]
-                max_doc = collection.find().sort("id", -1).limit(1)
-                max_id = 1
-                for d in max_doc:
-                    if d.get("id"): max_id = int(d["id"]) + 1
-                inst.id = max_id
+                if table_name not in table_max_ids:
+                    collection = self.db[table_name]
+                    max_doc = collection.find().sort("id", -1).limit(1)
+                    curr_max = 0
+                    for d in max_doc:
+                        if d.get("id"): curr_max = int(d["id"])
+                    
+                    # Also check if any objects in the session already have a higher ID assigned manually
+                    for other in self._new_objects:
+                        if other.__tablename__ == table_name:
+                            other_id = getattr(other, "id", None)
+                            if other_id is not None:
+                                curr_max = max(curr_max, int(other_id))
+                    table_max_ids[table_name] = curr_max
+                
+                table_max_ids[table_name] += 1
+                inst.id = table_max_ids[table_name]
 
     def commit(self):
         # 1. Execute scheduled deletes first

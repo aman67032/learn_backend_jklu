@@ -2139,7 +2139,9 @@ def update_contest(
             db.add(db_question)
     
     db.commit()
-    db.refresh(db_contest)
+    
+    # Re-fetch as FakeModelInstance to get working relationships and correctly formatted data
+    db_contest = db.query(DailyContest).filter(DailyContest.id == contest_id).first()
     
     # Format response
     response_questions = [QuestionResponse.from_orm_with_languages(q) for q in db_contest.questions]
@@ -2149,7 +2151,7 @@ def update_contest(
         date=db_contest.date,
         title=db_contest.title,
         description=db_contest.description,
-        created_at=db_contest.created_at,
+        created_at=safe_datetime(db_contest.created_at),
         questions=response_questions
     )
 
