@@ -411,6 +411,10 @@ class RegisterRequest(BaseModel):
     password: str
     confirm_password: str
 
+class UserAdminUpdate(BaseModel):
+    is_admin: Optional[bool] = None
+    admin_role: Optional[str] = None  # e.g. "coding_ta"
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -1617,6 +1621,74 @@ def get_dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(req
     )
     set_cached(cache_key, stats, _cache_ttl['dashboard_stats'])
     return stats
+
+# ========== User Management Endpoints ==========
+@app.post("/admin/create-sub-admin", response_model=UserResponse)
+def create_sub_admin(user: UserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Admin: Create a new Host (Sub-Admin)"""
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="User with this email already exists")
+    
+    hashed_password = get_password_hash(user.password)
+    new_host = User(
+        email=user.email,
+        name=user.name,
+        password_hash=hashed_password,
+        is_admin=True,
+        admin_role="coding_ta",
+        email_verified=True
+    )
+    db.add(new_host)
+    db.commit()
+    db.refresh(new_host)
+    return UserResponse(**serialize_user(new_host))
+
+@app.get("/admin/users", response_model=List[UserResponse])
+def get_all_users(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Admin: Get all users"""
+    users = db.query(User).all()
+    return [UserResponse(**serialize_user(user)) for user in users]
+
+@app.put("/admin/users/{user_id}", response_model=UserResponse)
+def update_user_role(
+    user_id: int, 
+    update_data: UserAdminUpdate, 
+    db: Session = Depends(get_db), 
+    admin: User = Depends(require_admin)
+):
+    """Admin: Update user roles"""
+    # Prevent super admin from removing their own admin status
+    if admin.id == user_id and update_data.is_admin is False:
+        raise HTTPException(status_code=400, detail="Cannot remove your own admin status")
+        
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if update_data.is_admin is not None:
+        user.is_admin = update_data.is_admin
+    if update_data.admin_role is not None:
+        user.admin_role = update_data.admin_role
+        
+    db.commit()
+    db.refresh(user)
+    return UserResponse(**serialize_user(user))
+
+@app.delete("/admin/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Admin: Delete a user"""
+    # Prevent self-deletion
+    if admin.id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+        
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    db.delete(user)
+    db.commit()
+    return {"message": "User deleted successfully", "id": user_id}
 
 # ========== Course Endpoints ==========
 @app.post("/courses", response_model=CourseResponse)
