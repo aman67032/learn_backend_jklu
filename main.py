@@ -1022,6 +1022,16 @@ async def log_requests(request: Request, call_next):
     
     return response
 
+@app.middleware("http")
+async def log_exceptions(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        import traceback
+        print(f"❌ [UNHANDLED EXCEPTION] {request.method} {request.url.path}")
+        print(traceback.format_exc())
+        raise e from None
+
 # API endpoint to serve uploaded files (works better on cloud platforms)
 @app.get("/uploads/{filename:path}")
 async def serve_uploaded_file(filename: str, db: Session = Depends(get_db)):

@@ -307,9 +307,17 @@ class Session:
         self._new_objects.append(instance)
 
     def flush(self):
-        # In this fake implementation, delete is immediate 
-        # and commit handles upserts. flush() is a no-op.
-        pass
+        # Assign IDs to new objects that don't have them yet
+        # This is critical for dependencies (e.g., questions needing contest_id)
+        for inst in self._new_objects:
+            doc = inst.dict() if hasattr(inst, "dict") else vars(inst)
+            if getattr(inst, "id", None) is None:
+                collection = self.db[inst.__tablename__]
+                max_doc = collection.find().sort("id", -1).limit(1)
+                max_id = 1
+                for d in max_doc:
+                    if d.get("id"): max_id = int(d["id"]) + 1
+                inst.id = max_id
 
     def commit(self):
         # 1. Execute scheduled deletes first
@@ -317,19 +325,13 @@ class Session:
             collection.delete_many(query_filter)
         self._scheduled_deletes = []
 
-        # 2. Execute scheduled upserts
+        # 2. Ensure all objects have IDs (flush)
+        self.flush()
+
+        # 3. Execute scheduled upserts
         for inst in self._new_objects:
             collection = self.db[inst.__tablename__]
             doc = inst.dict()
-            if doc.get("id") is None:
-                # We need to auto-generate integer IDs since SQL did this
-                # Workaround: find max ID in collection + 1
-                max_doc = collection.find().sort("id", -1).limit(1)
-                max_id = 1
-                for d in max_doc:
-                    if d.get("id"): max_id = d["id"] + 1
-                doc["id"] = max_id
-                inst.id = max_id
             
             # Upsert
             collection.update_one({"id": doc["id"]}, {"$set": doc}, upsert=True)
