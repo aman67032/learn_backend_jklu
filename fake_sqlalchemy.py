@@ -286,7 +286,7 @@ class Query:
         return self.collection.count_documents(self.query_filter)
         
     def delete(self):
-        self.collection.delete_many(self.query_filter)
+        self.session._scheduled_deletes.append((self.collection, self.query_filter))
 
     def options(self, *args):
         return self
@@ -295,6 +295,7 @@ class Session:
     def __init__(self, db):
         self.db = db
         self._new_objects = []
+        self._scheduled_deletes = []
 
     def query(self, model):
         # We also need to hack class attributes to ensure Column identities hook up correctly 
@@ -305,7 +306,18 @@ class Session:
     def add(self, instance):
         self._new_objects.append(instance)
 
+    def flush(self):
+        # In this fake implementation, delete is immediate 
+        # and commit handles upserts. flush() is a no-op.
+        pass
+
     def commit(self):
+        # 1. Execute scheduled deletes first
+        for collection, query_filter in self._scheduled_deletes:
+            collection.delete_many(query_filter)
+        self._scheduled_deletes = []
+
+        # 2. Execute scheduled upserts
         for inst in self._new_objects:
             collection = self.db[inst.__tablename__]
             doc = inst.dict()

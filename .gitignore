@@ -2,3 +2,5 @@
 exams/
 new/
 server_log*.txt
+__pycache__/
+*.pyc
