@@ -554,14 +554,16 @@ def serialize_challenge(c) -> dict:
 
 def serialize_announcement(a) -> dict:
     """Safely serialize a CodingAnnouncement to CodingAnnouncementResponse-compatible dict."""
+    ann_id = getattr(a, "id", 0)
     return {
-        "id": getattr(a, "id", 0),
+        "id": ann_id,
         "course_id": getattr(a, "course_id", None),
         "title": getattr(a, "title", ""),
         "content": getattr(a, "content", ""),
         "attachment_url": getattr(a, "attachment_url", None),
         "file_name": getattr(a, "file_name", None),
         "file_size": getattr(a, "file_size", None),
+        "download_url": f"{PUBLIC_BASE_URL}/coding-announcements/{ann_id}/download" if ann_id else None,
         "created_at": safe_datetime(getattr(a, "created_at", None)),
     }
 
@@ -666,7 +668,10 @@ class CodingAnnouncementResponse(BaseModel):
     course_id: Optional[int]
     title: str
     content: str
-    attachment_url: Optional[str]
+    attachment_url: Optional[str] = None
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    download_url: Optional[str] = None
     created_at: datetime
 
     media_link: Optional[str] = None
@@ -2076,6 +2081,9 @@ def delete_contest(contest_id: int, db: Session = Depends(get_db), admin: User =
     contest = db.query(DailyContest).filter(DailyContest.id == contest_id).first()
     if not contest:
         raise HTTPException(status_code=404, detail="Contest not found")
+    
+    # Explicitly delete all associated questions (cascading delete)
+    db.query(ContestQuestion).filter(ContestQuestion.contest_id == contest_id).delete()
     
     db.delete(contest)
     db.commit()

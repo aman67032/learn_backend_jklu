@@ -362,9 +362,12 @@ class Session:
         pass
 
     def delete(self, instance):
+        # Remove from _new_objects so it doesn't get upserted back during commit
+        self._new_objects = [obj for obj in self._new_objects 
+                             if not (getattr(obj, 'id', None) == getattr(instance, 'id', None) 
+                                     and getattr(obj, '__tablename__', None) == getattr(instance, '__tablename__', None))]
         collection = self.db[instance.__tablename__]
         collection.delete_one({"id": getattr(instance, 'id')})
-        self.commit()
 
 class create_engine:
     def __init__(self, url, *args, **kwargs):
