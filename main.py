@@ -102,16 +102,16 @@ def ensure_column_exists(
     column_sql = column_type_by_dialect.get(dialect, column_type_by_dialect.get("default"))
 
     if not column_sql:
-        print(f"⚠️  No column definition provided for dialect '{dialect}' on table '{table_name}'")
+        print(f"Warning: No column definition provided for dialect '{dialect}' on table '{table_name}'")
         return
 
     alter_statement = f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}"
     try:
         with engine.begin() as conn:
             conn.execute(text(alter_statement))
-        print(f"✅ Added missing column '{column_name}' to '{table_name}' ({dialect})")
+        print(f"Success: Added missing column '{column_name}' to '{table_name}' ({dialect})")
     except Exception as exc:
-        print(f"⚠️  Failed to add column '{column_name}' to '{table_name}': {exc}")
+        print(f"Warning: Failed to add column '{column_name}' to '{table_name}': {exc}")
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -569,8 +569,13 @@ def serialize_user(user) -> dict:
     elif created_at is None:
         created_at = datetime.now(timezone.utc)
     
+    user_id = getattr(user, "id", None)
+    if user_id is None:
+        user_email = getattr(user, "email", "")
+        user_id = abs(hash(user_email)) % 1000000 if user_email else 0
+
     return {
-        "id": getattr(user, "id", 0),
+        "id": user_id,
         "email": getattr(user, "email", ""),
         "name": getattr(user, "name", ""),
         "is_admin": getattr(user, "is_admin", False),
@@ -583,9 +588,8 @@ def serialize_user(user) -> dict:
         "department": getattr(user, "department", None),
         "roll_no": getattr(user, "roll_no", None),
         "student_id": getattr(user, "student_id", None),
-        "photo_path": getattr(user, "photo_path", None),
         "id_card_path": getattr(user, "id_card_path", None),
-        "id_verified": getattr(user, "id_verified", False),
+        "id_verified": bool(getattr(user, "id_verified", False)),
         "created_at": created_at,
         "admin_feedback": getattr(user, "admin_feedback", None),
     }
@@ -1648,7 +1652,7 @@ def create_sub_admin(user: UserCreate, db: Session = Depends(get_db), admin: Use
 def get_all_users(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Admin: Get all users"""
     users = db.query(User).all()
-    return [UserResponse(**serialize_user(user)) for user in users]
+    return [UserResponse(**serialize_user(u)) for u in users]
 
 @app.put("/admin/users/{user_id}", response_model=UserResponse)
 def update_user_role(

@@ -1,0 +1,6 @@
+Error ValidationError on User aman123@jklu.edu.in: 1 validation error for UserResponse
+id
+  Input should be a valid integer [type=int_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/int_type
+
+{'id': None, 'email': 'aman123@jklu.edu.in', 'name': 'aman', 'is_admin': False, 'admin_role': None, 'is_sub_admin': False, 'email_verified': True, 'age': None, 'year': None, 'university': None, 'department': None, 'roll_no': None, 'student_id': None, 'id_card_path': None, 'id_verified': False, 'created_at': datetime.datetime(2026, 3, 2, 13, 42, 39, 761000), 'admin_feedback': None}
