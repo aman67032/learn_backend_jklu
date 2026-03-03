@@ -2016,7 +2016,8 @@ def create_contest(contest: ContestCreate, db: Session = Depends(get_db), admin:
         db.add(db_question)
 
     db.commit()
-    db.refresh(db_contest)
+    # Re-fetch as FakeModelInstance to get working relationships and correctly formatted data
+    db_contest = db.query(DailyContest).filter(DailyContest.id == db_contest.id).first()
     
     # Format response
     response_questions = [QuestionResponse.from_orm_with_languages(q) for q in db_contest.questions]
