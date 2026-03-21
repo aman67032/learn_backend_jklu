@@ -2269,18 +2269,7 @@ async def upload_paper(
         # Check if course exists by code
         course = db.query(Course).filter(Course.code == course_code).first()
         if not course:
-            normalized_name = (course_name or course_code).strip()
-            if not normalized_name:
-                normalized_name = course_code
-            # Create new course if it doesn't exist
-            course = Course(
-                code=course_code,
-                name=normalized_name,
-                description=f"Auto-created during paper upload"
-            )
-            db.add(course)
-            db.commit()
-            db.refresh(course)
+            raise HTTPException(status_code=404, detail="Course not found. Please contact an admin to add this course.")
     
     # Validate file
     if not file.filename:
@@ -2408,11 +2397,12 @@ def get_public_papers_paginated(
     year: Optional[int] = None,
     semester: Optional[str] = None,
     department: Optional[str] = None,
+    search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Get all approved papers (public access) - Paginated"""
     # Create cache key based on filters and pagination
-    cache_key = f"public_papers_paginated_{page}_{limit}_{course_id}_{paper_type}_{year}_{semester}_{department}"
+    cache_key = f"public_papers_paginated_{page}_{limit}_{course_id}_{paper_type}_{year}_{semester}_{department}_{search}"
     cached = get_cached(cache_key)
     if cached is not None:
         return cached
@@ -2420,6 +2410,15 @@ def get_public_papers_paginated(
     query = db.query(Paper).filter(Paper.status == SubmissionStatus.APPROVED)
     
     # Apply filters
+    if search:
+        search_term = f"%{search}%"
+        query = query.join(Course).filter(
+            or_(
+                Paper.title.ilike(search_term),
+                Course.code.ilike(search_term),
+                Course.name.ilike(search_term)
+            )
+        )
     if course_id:
         query = query.filter(Paper.course_id == course_id)
     if paper_type:
@@ -2467,11 +2466,12 @@ def get_public_papers(
     year: Optional[int] = None,
     semester: Optional[str] = None,
     department: Optional[str] = None,
+    search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Get all approved papers (public access, no authentication required) - cached for 1 minute"""
     # Create cache key based on filters
-    cache_key = f"public_papers_{course_id}_{paper_type}_{year}_{semester}_{department}"
+    cache_key = f"public_papers_{course_id}_{paper_type}_{year}_{semester}_{department}_{search}"
     cached = get_cached(cache_key)
     if cached is not None:
         return cached
@@ -2479,6 +2479,15 @@ def get_public_papers(
     query = db.query(Paper).filter(Paper.status == SubmissionStatus.APPROVED)
     
     # Apply filters
+    if search:
+        search_term = f"%{search}%"
+        query = query.join(Course).filter(
+            or_(
+                Paper.title.ilike(search_term),
+                Course.code.ilike(search_term),
+                Course.name.ilike(search_term)
+            )
+        )
     if course_id:
         query = query.filter(Paper.course_id == course_id)
     if paper_type:
