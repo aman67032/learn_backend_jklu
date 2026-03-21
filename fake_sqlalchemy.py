@@ -294,7 +294,7 @@ class Query:
         return self
 
     def first(self):
-        cursor = self.collection.find(self.query_filter)
+        cursor = self.collection.find(self.query_filter, allow_disk_use=True)
         if self._sort: cursor = cursor.sort(self._sort)
         if self._offset: cursor = cursor.skip(self._offset)
         doc = cursor.limit(1)
@@ -307,7 +307,7 @@ class Query:
         return None
 
     def all(self):
-        cursor = self.collection.find(self.query_filter)
+        cursor = self.collection.find(self.query_filter, allow_disk_use=True)
         if self._sort: cursor = cursor.sort(self._sort)
         if self._offset: cursor = cursor.skip(self._offset)
         if self._limit: cursor = cursor.limit(self._limit)
