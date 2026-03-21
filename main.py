@@ -2269,7 +2269,13 @@ async def upload_paper(
         # Check if course exists by code
         course = db.query(Course).filter(Course.code == course_code).first()
         if not course:
-            raise HTTPException(status_code=404, detail="Course not found. Please contact an admin to add this course.")
+            if course_name and course_name.strip():
+                # Auto-create course if not found and name provided
+                course = Course(code=course_code, name=course_name.strip())
+                db.add(course)
+                db.flush() # Ensure it gets an ID before paper creation
+            else:
+                raise HTTPException(status_code=400, detail="Course not found. Please provide a course name to add this course during upload.")
     
     # Validate file
     if not file.filename:

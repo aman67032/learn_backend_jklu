@@ -143,7 +143,7 @@ class FakeModelInstance:
             
         # Handle @property attributes on the model class (e.g., is_sub_admin)
         attr = getattr(self._model_class, name, None)
-        if isinstance(attr, property):
+        if isinstance(attr, property) and name not in ["course", "uploader", "reviewer", "questions", "papers"]:
             try:
                 val = attr.fget(self)
                 if val is not None:
@@ -151,7 +151,7 @@ class FakeModelInstance:
             except Exception:
                 pass
 
-        # Handle relationships like "questions" based on the parent instance
+        # Handle relationships based on the parent instance
         if not self._session:
             return [] if name.endswith("s") else None
             
@@ -166,8 +166,33 @@ class FakeModelInstance:
                 docs = self._session.db["papers"].find({"course_id": self.id})
                 from main import Paper
                 return [FakeModelInstance(doc, Paper, self._session) for doc in docs]
+            if name == "course":
+                course_id = getattr(self, "course_id", None)
+                if course_id:
+                    doc = self._session.db["courses"].find_one({"id": course_id})
+                    if doc:
+                        from main import Course
+                        return FakeModelInstance(doc, Course, self._session)
+                return None
+            if name == "uploader":
+                uploaded_by = getattr(self, "uploaded_by", None)
+                if uploaded_by:
+                    doc = self._session.db["users"].find_one({"id": uploaded_by})
+                    if doc:
+                        from main import User
+                        return FakeModelInstance(doc, User, self._session)
+                return None
+            if name == "reviewer":
+                reviewed_by = getattr(self, "reviewed_by", None)
+                if reviewed_by:
+                    doc = self._session.db["users"].find_one({"id": reviewed_by})
+                    if doc:
+                        from main import User
+                        return FakeModelInstance(doc, User, self._session)
+                return None
             
-        except Exception:
+        except Exception as e:
+            print(f"Error in relationship lookup for {name}: {e}")
             pass
             
         if name.endswith("s"):
