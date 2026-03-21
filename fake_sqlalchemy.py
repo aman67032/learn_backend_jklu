@@ -295,9 +295,9 @@ class Query:
 
     def first(self):
         cursor = self.collection.find(self.query_filter)
-        cursor.allow_disk_use(True)
         if self._sort: cursor = cursor.sort(self._sort)
         if self._offset: cursor = cursor.skip(self._offset)
+        cursor.allow_disk_use(True)
         doc = cursor.limit(1)
         res = list(doc)
         if res:
@@ -309,10 +309,10 @@ class Query:
 
     def all(self):
         cursor = self.collection.find(self.query_filter)
-        cursor.allow_disk_use(True)
         if self._sort: cursor = cursor.sort(self._sort)
         if self._offset: cursor = cursor.skip(self._offset)
         if self._limit: cursor = cursor.limit(self._limit)
+        cursor.allow_disk_use(True)
         results = [FakeModelInstance(doc, self.model, self.session) for doc in cursor]
         for obj in results:
             if obj not in self.session._new_objects:
