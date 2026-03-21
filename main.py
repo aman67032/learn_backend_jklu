@@ -2375,7 +2375,7 @@ def get_papers(
         papers = query.options(
             joinedload(Paper.course),
             joinedload(Paper.uploader)
-        ).order_by(Paper.uploaded_at.desc()).limit(100).all()
+        ).order_by(Paper.uploaded_at.desc()).all()
         
         return [format_paper_response(paper, current_user.is_admin) for paper in papers]
     except Exception as e:
@@ -2517,7 +2517,7 @@ def get_public_papers(
     papers = query.options(
         joinedload(Paper.course),
         joinedload(Paper.uploader)
-    ).order_by(Paper.uploaded_at.desc()).all()
+    ).order_by(Paper.uploaded_at.desc()).limit(100).all()
     
     result = [format_paper_response(paper, False) for paper in papers]
     set_cached(cache_key, result, _cache_ttl['public_papers'])
