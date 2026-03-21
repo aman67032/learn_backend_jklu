@@ -92,7 +92,7 @@ def joinedload(*args):
     return args
 
 def relationship(*args, **kwargs):
-    return property(lambda self: None)
+    return None
 
 # Datatypes
 def DatatypeFactory(*args, **kwargs): return args
@@ -143,11 +143,11 @@ class FakeModelInstance:
             
         # Handle @property attributes on the model class (e.g., is_sub_admin)
         attr = getattr(self._model_class, name, None)
-        if isinstance(attr, property) and name not in ["course", "uploader", "reviewer", "questions", "papers"]:
+        if isinstance(attr, property):
             try:
-                val = attr.fget(self)
-                if val is not None:
-                    return val
+                # EXCEPTION: If it is one of our special relationship names, we might want to skip it 
+                # but relationship() is no longer a property, so this only hits real @property methods.
+                return attr.fget(self)
             except Exception:
                 pass
 
@@ -156,43 +156,51 @@ class FakeModelInstance:
             return [] if name.endswith("s") else None
             
         try:
+            import sys
+            main_mod = sys.modules.get('main')
+            
             # If it's a property, try to fetch related docs
             # Simple heuristic: contests have questions, courses have papers
             if name == "questions":
                 docs = self._session.db["contest_questions"].find({"contest_id": self.id})
-                from main import ContestQuestion
-                return [FakeModelInstance(doc, ContestQuestion, self._session) for doc in docs]
+                if main_mod:
+                    ContestQuestion = getattr(main_mod, "ContestQuestion")
+                    return [FakeModelInstance(doc, ContestQuestion, self._session) for doc in docs]
+                return []
             if name == "papers":
                 docs = self._session.db["papers"].find({"course_id": self.id})
-                from main import Paper
-                return [FakeModelInstance(doc, Paper, self._session) for doc in docs]
+                if main_mod:
+                    Paper = getattr(main_mod, "Paper")
+                    return [FakeModelInstance(doc, Paper, self._session) for doc in docs]
+                return []
             if name == "course":
                 course_id = getattr(self, "course_id", None)
-                if course_id:
-                    doc = self._session.db["courses"].find_one({"id": course_id})
+                if course_id and main_mod:
+                    doc = self._session.db["courses"].find_one({"id": int(course_id)})
                     if doc:
-                        from main import Course
+                        Course = getattr(main_mod, "Course")
                         return FakeModelInstance(doc, Course, self._session)
                 return None
             if name == "uploader":
                 uploaded_by = getattr(self, "uploaded_by", None)
-                if uploaded_by:
-                    doc = self._session.db["users"].find_one({"id": uploaded_by})
+                if uploaded_by and main_mod:
+                    doc = self._session.db["users"].find_one({"id": int(uploaded_by)})
                     if doc:
-                        from main import User
+                        User = getattr(main_mod, "User")
                         return FakeModelInstance(doc, User, self._session)
                 return None
             if name == "reviewer":
                 reviewed_by = getattr(self, "reviewed_by", None)
-                if reviewed_by:
-                    doc = self._session.db["users"].find_one({"id": reviewed_by})
+                if reviewed_by and main_mod:
+                    doc = self._session.db["users"].find_one({"id": int(reviewed_by)})
                     if doc:
-                        from main import User
+                        User = getattr(main_mod, "User")
                         return FakeModelInstance(doc, User, self._session)
                 return None
             
         except Exception as e:
-            print(f"Error in relationship lookup for {name}: {e}")
+            # Avoid printing long traces in production, but good for debug
+            # print(f"Error in relationship lookup for {name}: {e}")
             pass
             
         if name.endswith("s"):
