@@ -790,26 +790,23 @@ class PaperResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
     id: int
-    course_id: int
-    course_code: Optional[str]
-    course_name: Optional[str]
-    uploaded_by: Optional[int]
-    uploader_name: Optional[str]
-    uploader_email: Optional[str]
     title: str
-    description: Optional[str]
+    description: Optional[str] = None
     paper_type: PaperType
-    year: Optional[int]
-    semester: Optional[str]
+    quiz_set: Optional[str] = None
+    year: Optional[int] = None
+    semester: Optional[str] = None
     department: Optional[str] = None
     file_name: str
     file_path: str
-    file_size: Optional[int]
-    status: SubmissionStatus
+    course_id: Optional[int] = None
+    course_code: Optional[str] = "Unknown"
+    course_name: Optional[str] = "Unknown"
+    uploaded_by: Optional[int] = None
+    uploader_name: Optional[str] = "Unknown"
+    uploader_email: Optional[str] = "Unknown"
+    status: SubmissionStatus = SubmissionStatus.PENDING
     uploaded_at: datetime
-    reviewed_at: Optional[datetime]
-    rejection_reason: Optional[str]
-    admin_feedback: Optional[dict] = None
     public_link_id: Optional[str] = None
     public_url: Optional[str] = None
 
@@ -841,6 +838,11 @@ class PaginatedPapersResponse(BaseModel):
     page: int
     size: int
     pages: int
+
+class PapersMetadata(BaseModel):
+    years: List[int]
+    types: List[str]
+    courses: List[dict] # List of {id: int, code: str, name: str}
 
 # ========== Auth Functions ==========
 def verify_password(plain_password, hashed_password):
@@ -2323,8 +2325,10 @@ async def upload_paper(
     
     return {"message": "Paper uploaded successfully and pending approval", "paper_id": paper.id}
 
-@app.get("/papers", response_model=List[PaperResponse])
+@app.get("/papers", response_model=PaginatedPapersResponse)
 def get_papers(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
     course_id: Optional[int] = None,
     paper_type: Optional[PaperType] = None,
     year: Optional[int] = None,
@@ -2335,7 +2339,7 @@ def get_papers(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get papers with filters"""
+    """Get papers with filters - Paginated"""
     try:
         query = db.query(Paper)
         
@@ -2371,13 +2375,27 @@ def get_papers(
         if department:
             query = query.filter(Paper.department == department)
         
+        total = query.count()
+        offset = (page - 1) * limit
+        import math
+        pages = math.ceil(total / limit) if limit > 0 else 0
+        
         # Optimize: Use eager loading to avoid N+1 queries
+        # Apply pagination
         papers = query.options(
             joinedload(Paper.course),
             joinedload(Paper.uploader)
-        ).order_by(Paper.uploaded_at.desc()).all()
+        ).order_by(Paper.uploaded_at.desc()).offset(offset).limit(limit).all()
         
-        return [format_paper_response(paper, current_user.is_admin) for paper in papers]
+        items = [format_paper_response(paper, current_user.is_admin) for paper in papers]
+        
+        return PaginatedPapersResponse(
+            items=items,
+            total=total,
+            page=page,
+            size=limit,
+            pages=pages
+        )
     except Exception as e:
         import traceback
         err_msg = f"Papers fetch error: {str(e)}"
@@ -2473,8 +2491,10 @@ def get_public_papers_paginated(
     set_cached(cache_key, result, _cache_ttl['public_papers'])
     return result
 
-@app.get("/papers/public/all", response_model=List[PaperResponse])
+@app.get("/papers/public/all", response_model=PaginatedPapersResponse)
 def get_public_papers(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
     course_id: Optional[int] = None,
     paper_type: Optional[PaperType] = None,
     year: Optional[int] = None,
@@ -2483,16 +2503,15 @@ def get_public_papers(
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all approved papers (public access, no authentication required) - cached for 1 minute"""
-    # Create cache key based on filters
-    cache_key = f"public_papers_{course_id}_{paper_type}_{year}_{semester}_{department}_{search}"
+    """Get all approved papers (public access, with pagination)"""
+    cache_key = f"public_papers_all_{page}_{limit}_{course_id}_{paper_type}_{year}_{semester}_{department}_{search}"
     cached = get_cached(cache_key)
     if cached is not None:
         return cached
     
     query = db.query(Paper).filter(Paper.status == SubmissionStatus.APPROVED)
     
-    # Apply filters
+    # ... filters (keep same as original)
     if search:
         search_term = f"%{search}%"
         query = query.join(Course).filter(
@@ -2513,11 +2532,57 @@ def get_public_papers(
     if department:
         query = query.filter(Paper.department == department)
     
-    # Optimize: Use eager loading to avoid N+1 queries
+    total = query.count()
+    offset = (page - 1) * limit
+    import math
+    pages = math.ceil(total / limit)
+    
     papers = query.options(
         joinedload(Paper.course),
         joinedload(Paper.uploader)
-    ).order_by(Paper.uploaded_at.desc()).limit(100).all()
+    ).order_by(Paper.uploaded_at.desc()).offset(offset).limit(limit).all()
+    
+    items = [format_paper_response(paper, False) for paper in papers]
+    result = PaginatedPapersResponse(
+        items=items,
+        total=total,
+        page=page,
+        size=limit,
+        pages=pages
+    )
+    set_cached(cache_key, result, _cache_ttl['public_papers'])
+    return result
+
+@app.get("/papers/metadata", response_model=PapersMetadata)
+def get_papers_metadata(db: Session = Depends(get_db)):
+    """Get metadata for filtering (years, types, courses) without loading all papers"""
+    # Use distinct values from the database
+    # In fake_sqlalchemy, we simulate this via mongo distinct
+    try:
+        # Get years
+        papers_col = db.db.papers
+        years = sorted(list(papers_col.distinct("year", {"status": "approved"})), reverse=True)
+        # types
+        types = sorted(list(papers_col.distinct("paper_type", {"status": "approved"})))
+        
+        # courses
+        courses_col = db.db.courses
+        # Fetch just the essential fields
+        courses_data = list(courses_col.find({}, {"_id": 1, "id": 1, "code": 1, "name": 1}))
+        # Format for output
+        courses = [
+            {"id": c.get("id"), "code": c.get("code"), "name": c.get("name")} 
+            for c in courses_data if c.get("id") is not None
+        ]
+        
+        return PapersMetadata(
+            years=[y for y in years if y is not None],
+            types=[t for t in types if t is not None],
+            courses=courses
+        )
+    except Exception as e:
+        print(f"[ERROR] metadata error: {e}")
+        return PapersMetadata(years=[], types=[], courses=[])
     
     result = [format_paper_response(paper, False) for paper in papers]
     set_cached(cache_key, result, _cache_ttl['public_papers'])
