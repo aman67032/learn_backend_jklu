@@ -140,13 +140,15 @@ class FakeModelInstance:
     def __getattr__(self, name):
         if name == "__tablename__":
             return self._collection_name
+        if name.startswith("_"):
+            return None
             
         # Handle @property attributes on the model class (e.g., is_sub_admin)
+        # Avoid recursion by checking __dict__ first if name is a model field
         attr = getattr(self._model_class, name, None)
         if isinstance(attr, property):
             try:
-                # EXCEPTION: If it is one of our special relationship names, we might want to skip it 
-                # but relationship() is no longer a property, so this only hits real @property methods.
+                # relationship() is NOT a property now, so this only hits actual @property
                 return attr.fget(self)
             except Exception:
                 pass
@@ -155,52 +157,52 @@ class FakeModelInstance:
         if not self._session:
             return [] if name.endswith("s") else None
             
+        # We use a localized dynamic lookup for models to avoid circular imports
         try:
             import sys
             main_mod = sys.modules.get('main')
-            
-            # If it's a property, try to fetch related docs
-            # Simple heuristic: contests have questions, courses have papers
+            if not main_mod:
+                return [] if name.endswith("s") else None
+
+            # Relationship Lookups
             if name == "questions":
                 docs = self._session.db["contest_questions"].find({"contest_id": self.id})
-                if main_mod:
-                    ContestQuestion = getattr(main_mod, "ContestQuestion")
-                    return [FakeModelInstance(doc, ContestQuestion, self._session) for doc in docs]
+                Model = getattr(main_mod, "ContestQuestion", None)
+                if Model:
+                    return [FakeModelInstance(doc, Model, self._session) for doc in docs]
                 return []
             if name == "papers":
                 docs = self._session.db["papers"].find({"course_id": self.id})
-                if main_mod:
-                    Paper = getattr(main_mod, "Paper")
-                    return [FakeModelInstance(doc, Paper, self._session) for doc in docs]
+                Model = getattr(main_mod, "Paper", None)
+                if Model:
+                    return [FakeModelInstance(doc, Model, self._session) for doc in docs]
                 return []
             if name == "course":
                 course_id = getattr(self, "course_id", None)
-                if course_id and main_mod:
+                if course_id:
                     doc = self._session.db["courses"].find_one({"id": int(course_id)})
-                    if doc:
-                        Course = getattr(main_mod, "Course")
-                        return FakeModelInstance(doc, Course, self._session)
+                    Model = getattr(main_mod, "Course", None)
+                    if doc and Model:
+                        return FakeModelInstance(doc, Model, self._session)
                 return None
             if name == "uploader":
                 uploaded_by = getattr(self, "uploaded_by", None)
-                if uploaded_by and main_mod:
+                if uploaded_by:
                     doc = self._session.db["users"].find_one({"id": int(uploaded_by)})
-                    if doc:
-                        User = getattr(main_mod, "User")
-                        return FakeModelInstance(doc, User, self._session)
+                    Model = getattr(main_mod, "User", None)
+                    if doc and Model:
+                        return FakeModelInstance(doc, Model, self._session)
                 return None
             if name == "reviewer":
                 reviewed_by = getattr(self, "reviewed_by", None)
-                if reviewed_by and main_mod:
+                if reviewed_by:
                     doc = self._session.db["users"].find_one({"id": int(reviewed_by)})
-                    if doc:
-                        User = getattr(main_mod, "User")
-                        return FakeModelInstance(doc, User, self._session)
+                    Model = getattr(main_mod, "User", None)
+                    if doc and Model:
+                        return FakeModelInstance(doc, Model, self._session)
                 return None
             
-        except Exception as e:
-            # Avoid printing long traces in production, but good for debug
-            # print(f"Error in relationship lookup for {name}: {e}")
+        except Exception:
             pass
             
         if name.endswith("s"):
