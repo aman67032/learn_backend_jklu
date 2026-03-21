@@ -2380,9 +2380,17 @@ def get_papers(
         return [format_paper_response(paper, current_user.is_admin) for paper in papers]
     except Exception as e:
         import traceback
-        print(f"[ERROR] /papers endpoint error: {e}")
+        err_msg = f"Papers fetch error: {str(e)}"
+        print(f"[ERROR] {err_msg}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Papers error: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "message": err_msg,
+                "type": type(e).__name__,
+                "suggestion": "Check backend logs for recovery traces"
+            }
+        )
 
 @app.get("/papers/pending", response_model=List[PaperResponse])
 def get_pending_papers(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
@@ -2918,80 +2926,97 @@ def format_user_response(user: User) -> dict:
     return user_dict
 
 def format_paper_response(paper: Paper, include_private_info: bool = False):
-    """Format paper for response"""
-    # Normalize file_path to be relative to uploads/ for frontend consumption
-    # Ensure file_path is never None - use original if normalization returns None
-    file_path = normalize_file_path(paper.file_path)
-    if file_path is None and paper.file_path:
-        # If normalization failed but we have a file_path, use it as-is
-        file_path = paper.file_path
-    elif file_path is None:
-        # If no file_path at all, use empty string
-        file_path = ""
-    
-    # Generate public URL for any paper with public_link_id (no approval restriction)
-    public_url = None
-    if paper.public_link_id:
-        public_url = f"{PUBLIC_BASE_URL}/public/papers/{paper.public_link_id}"
-    
-    # Safely coerce paper_type and status from MongoDB strings to enum values
-    raw_paper_type = getattr(paper, "paper_type", None)
-    if isinstance(raw_paper_type, str):
-        try:
-            raw_paper_type = PaperType(raw_paper_type.lower())
-        except ValueError:
-            raw_paper_type = PaperType.OTHER
-    
-    raw_status = getattr(paper, "status", None)
-    if isinstance(raw_status, str):
-        try:
-            raw_status = SubmissionStatus(raw_status.lower())
-        except ValueError:
-            raw_status = SubmissionStatus.PENDING
-    
-    # Safely coerce datetime fields from MongoDB strings
-    uploaded_at = getattr(paper, "uploaded_at", None)
-    if isinstance(uploaded_at, str):
-        try:
-            uploaded_at = datetime.fromisoformat(uploaded_at.replace("Z", "+00:00"))
-        except Exception:
+    """Format paper for response with extra resilience"""
+    try:
+        # Normalize file_path to be relative to uploads/ for frontend consumption
+        raw_file_path = getattr(paper, "file_path", "")
+        file_path = normalize_file_path(raw_file_path)
+        if file_path is None and raw_file_path:
+            file_path = raw_file_path
+        elif file_path is None:
+            file_path = ""
+        
+        # Generate public URL
+        public_link_id = getattr(paper, "public_link_id", None)
+        public_url = None
+        if public_link_id:
+            public_url = f"{PUBLIC_BASE_URL}/public/papers/{public_link_id}"
+        
+        # Safely coerce paper_type and status
+        raw_paper_type = getattr(paper, "paper_type", None)
+        if isinstance(raw_paper_type, str):
+            try:
+                raw_paper_type = PaperType(raw_paper_type.lower())
+            except ValueError:
+                raw_paper_type = PaperType.OTHER
+        
+        raw_status = getattr(paper, "status", None)
+        if isinstance(raw_status, str):
+            try:
+                raw_status = SubmissionStatus(raw_status.lower())
+            except ValueError:
+                raw_status = SubmissionStatus.PENDING
+        
+        # Safely coerce datetime fields
+        uploaded_at = getattr(paper, "uploaded_at", None)
+        if isinstance(uploaded_at, str):
+            try:
+                uploaded_at = datetime.fromisoformat(uploaded_at.replace("Z", "+00:00"))
+            except Exception:
+                uploaded_at = datetime.now(timezone.utc)
+        elif uploaded_at is None:
             uploaded_at = datetime.now(timezone.utc)
-    elif uploaded_at is None:
-        uploaded_at = datetime.now(timezone.utc)
-    
-    reviewed_at = getattr(paper, "reviewed_at", None)
-    if isinstance(reviewed_at, str):
-        try:
-            reviewed_at = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
-        except Exception:
-            reviewed_at = None
-    
-    paper_dict = {
-        "id": paper.id,
-        "course_id": paper.course_id,
-        "course_code": paper.course.code if paper.course else None,
-        "course_name": paper.course.name if paper.course else None,
-        "uploaded_by": paper.uploaded_by,
-        "uploader_name": paper.uploader.name if paper.uploader else "Unknown",
-        "uploader_email": paper.uploader.email if (paper.uploader and include_private_info) else None,
-        "title": paper.title,
-        "description": paper.description,
-        "paper_type": raw_paper_type,
-        "year": paper.year,
-        "semester": paper.semester,
-        "department": paper.department,
-        "file_name": paper.file_name or "",  # Ensure file_name is never None
-        "file_size": paper.file_size,
-        "file_path": file_path,  # Normalized to just filename, never None
-        "status": raw_status,
-        "uploaded_at": uploaded_at,
-        "reviewed_at": reviewed_at,
-        "rejection_reason": paper.rejection_reason if include_private_info else None,
-        "admin_feedback": paper.admin_feedback if (include_private_info or raw_status == SubmissionStatus.REJECTED) else None,
-        "public_link_id": paper.public_link_id,
-        "public_url": public_url
-    }
-    return PaperResponse(**paper_dict)
+        
+        reviewed_at = getattr(paper, "reviewed_at", None)
+        if isinstance(reviewed_at, str):
+            try:
+                reviewed_at = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
+            except Exception:
+                reviewed_at = None
+
+        # Safer relationship access
+        course = getattr(paper, "course", None)
+        uploader = getattr(paper, "uploader", None)
+        
+        paper_dict = {
+            "id": getattr(paper, "id", 0),
+            "course_id": getattr(paper, "course_id", 0),
+            "course_code": getattr(course, "code", None) if course else None,
+            "course_name": getattr(course, "name", None) if course else None,
+            "uploaded_by": getattr(paper, "uploaded_by", None),
+            "uploader_name": getattr(uploader, "name", "Unknown") if uploader else "Unknown",
+            "uploader_email": getattr(uploader, "email", None) if (uploader and include_private_info) else None,
+            "title": getattr(paper, "title", "Untitled"),
+            "description": getattr(paper, "description", None),
+            "paper_type": raw_paper_type or PaperType.OTHER,
+            "year": getattr(paper, "year", None),
+            "semester": getattr(paper, "semester", None),
+            "department": getattr(paper, "department", None),
+            "file_name": getattr(paper, "file_name", "document.pdf") or "",
+            "file_size": getattr(paper, "file_size", 0),
+            "file_path": file_path,
+            "status": raw_status or SubmissionStatus.PENDING,
+            "uploaded_at": uploaded_at,
+            "reviewed_at": reviewed_at,
+            "rejection_reason": getattr(paper, "rejection_reason", None) if include_private_info else None,
+            "admin_feedback": getattr(paper, "admin_feedback", None) if (include_private_info or raw_status == SubmissionStatus.REJECTED) else None,
+            "public_link_id": public_link_id,
+            "public_url": public_url
+        }
+        return PaperResponse(**paper_dict)
+    except Exception as e:
+        print(f"[RECOVERY] Error formatting paper {getattr(paper, 'id', 'unknown')}: {e}")
+        # Return a minimal valid dummy object if everything fails to avoid 500 error
+        return PaperResponse(
+            id=getattr(paper, "id", 0),
+            course_id=getattr(paper, "course_id", 0),
+            title="[Error Loading Title]",
+            paper_type=PaperType.OTHER,
+            file_name="error.pdf",
+            file_path="",
+            status=SubmissionStatus.PENDING,
+            uploaded_at=datetime.now(timezone.utc)
+        )
 
 def get_mime_type(filename: str) -> str:
     """Get MIME type for a file"""
